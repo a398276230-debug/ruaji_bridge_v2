@@ -18,9 +18,9 @@
 - 💬 **上下文预算与群聊智能决策**：
   - 本地滑窗与消息去重，800ms 快速连发消息防抖合并。
   - 严格的字符预算控制（全局与单源预算分配），防止长文本撑爆上下文。
-- 🛡️ **影子模式与离线沙箱**：
-  - **Shadow Mode**：支持在无真实发信与副作用的前提下，实时监听并对比新旧决策与模型生成。
+- 🛡️ **离线沙箱与安全隔离**：
   - **离线沙箱**：在控制台中构造虚拟消息，单步可视化展开规范化、上下文聚合、Prompt 渲染与模型回复。
+  - **私聊白名单**：严格防盗刷与敏感隔离，非白名单私聊前置静默丢弃。
 - 🎛️ **内置 Web 运维与客制化控制台**（默认 `:29998`）：
   - **系统大盘**：服务探活、延迟分布、裁决统计与熔断状态监控。
   - **全链路追踪**：按 ID/内容检索消息树状时序与各步骤详细耗时。
@@ -68,13 +68,13 @@ npm start
 
 | 功能页面 | 说明 |
 | :--- | :--- |
-| **系统大盘** | 查看 NapCat、LLM 与外部插件的健康状态、实时吞吐量与 Middleware 延迟 |
+| **系统大盘** | 查看 NapCat/LLBot、LLM 与统一宿主的健康状态、实时吞吐量与 Middleware 延迟 |
 | **全链路追踪** | 查看任意一条消息从接收、裁决、上下文聚合、LLM 推理到发送的完整时序树 |
 | **离线沙箱** | 在不连接真实 QQ 的情况下输入测试消息，单步调试 Prompt 渲染与输出 |
-| **影子对比** | 离线查看新旧版本决策一致率与 Prompt 差异报告 |
-| **好感度** | 查看群友的好感度阶梯与互动记录，支持管理员手动增减 |
+| **好感度** | 查看群友的好感度阶梯与互动记录，支持管理员手动增减与冷暴力管理 |
+| **群友画像** | 卡片化展示群友性格画像与雷区提示，支持手动重分析 |
 | **表情包** | 浏览本地表情包图库，测试 Tag 检索与引用效果 |
-| **客制化设置** | 图形化配置身份、模型、NapCat、快速应答与识图打标，支持一键测速 |
+| **客制化设置** | 图形化配置身份、模型、协议端、快速应答与识图打标，支持一键测速 |
 
 ---
 
@@ -83,7 +83,7 @@ npm start
 系统与统一宿主（AstrBot 插件生态）通过直连 Hermes 的 `SOUL.md` 实现全生命周期人格统一与沙箱隔离。
 
 ### 核心规范要求：
-为保证人格能够在 **Hermes Agent**、**GCP（读空气决策）** 与 **SelfLearning（语气演化与学习）** 之间完美同步与安全演化，系统要求 `SOUL.md` 中**必须包含 `<Self-awareness>...</Self-awareness>` 结构化标签**：
+为保证人格能够在 **Hermes Agent**、**GCP（读空气决策）** 与 **LivingMemory（记忆图谱）** 之间完美同步与安全共生，系统要求 `SOUL.md` 中**必须包含 `<Self-awareness>...</Self-awareness>` 结构化标签**：
 
 ```markdown
 <Self-awareness>
@@ -95,14 +95,14 @@ npm start
 </extra_command>
 ```
 
-- **读隔离**：统一宿主底层垫片会自动正则提取 `<Self-awareness>` 内部作为 AstrBot 插件的人格核心（如 GCP 读空气决策、SelfLearning 语气分析），严格隔离标签外的系统级指令；
-- **写隔离**：当 SelfLearning 演化人格并写回时，系统精准只替换 `<Self-awareness>` 内部，绝不污染或破坏外围指令，实现真正的人格双向打通与安全共生。
+- **读隔离**：统一宿主底层垫片会自动正则提取 `<Self-awareness>` 内部作为 AstrBot 插件的人格核心（如 GCP 读空气决策），严格隔离标签外的系统级指令；
+- **写隔离**：系统精准只读取 `<Self-awareness>` 内部，绝不污染或破坏外围指令，实现真正的人格打通与安全共生。
 
 ---
 
 ## 🔌 Hermes MCP (Model Context Protocol) 扩展
 
-本项目提供了标准的 Model Context Protocol (stdio MCP) 桥接器，允许将统一宿主（AstrBot 生态能力：长期记忆检索、知识图谱查询、社区黑话挖掘、记忆写入等）作为外部原生工具无缝接入 **Hermes Agent**、Claude Code 或任何支持 MCP 协议的智能体。
+本项目提供了标准的 Model Context Protocol (stdio MCP) 桥接器，允许将统一宿主（AstrBot 生态能力：长期记忆检索、知识图谱查询、记忆写入等）作为外部原生工具无缝接入 **Hermes Agent**、Claude Code 或任何支持 MCP 协议的智能体。
 
 ### 1. 架构组件说明
 
@@ -123,7 +123,8 @@ mcp_servers:
   unified-host:
     command: C:\Program Files\nodejs\node.exe
     args:
-      - F:\hermescache\hermes-workspace\ruaji_bridge_v2\scripts\unified_host_mcp.mjs
+      - F:\hermescache\hermes-workspace
+uaji_bridge_v2\scripts\unified_host_mcp.mjs
     env:
       UNIFIED_HOST_URL: http://127.0.0.1:8870
       UNIFIED_HOST_MANIFEST: F:\hermes-agent\unified_host_tools.json
@@ -131,27 +132,13 @@ mcp_servers:
     timeout: 60
 ```
 
-配置后 Hermes Agent 在启动或会话中即可自动发现并调用 `recall_long_term_memory`、`memorize_long_term_memory`、`query_knowledge_graph`、`query_community_jargon` 等工具。
-
----
-
-## 🧪 自动化测试
-
-项目内置了完备的契约测试、单元测试与全链路集成测试：
-
-```bash
-# 运行全套测试（289+ 测试用例全部覆盖）
-npm test
-
-# 单条 Fixture 本地离线重放
-node scripts/replay.js tests/fixtures/group-at-bot.json
-```
+配置后 Hermes Agent 在启动或会话中即可自动发现并调用 `recall_long_term_memory`、`memorize_long_term_memory`、`query_knowledge_graph` 等工具。
 
 ---
 
 ## ⚖️ 免责声明与开源致谢
 
-1. **开源致谢**：本项目及 `astr/` 目录中集成了 AstrBot 生态社区的优秀开源组件及二次开发适配（包含但不限于 `astrbot_plugin_group_chat_plus`、`astrbot_plugin_livingmemory`、`astrbot_plugin_self_learning` 与 `unified_astrbot_host` 等）。所有第三方开源代码与资源的知识产权及著作权归原作者所有。
+1. **开源致谢**：本项目及 `astr/` 目录中集成了 AstrBot 生态社区的优秀开源组件及二次开发适配（包含但不限于 `astrbot_plugin_group_chat_plus`、`astrbot_plugin_livingmemory` 与 `unified_astrbot_host` 等）。所有第三方开源代码与资源的知识产权及著作权归原作者所有。
 2. **学习与交流**：本项目仅供个人技术研究、自动化架构探索及非商业学习交流使用。
 3. **免责条款**：使用者在部署及使用本系统时，应严格遵守当地法律法规以及相关平台的服务协议。因不当使用、二次分发或第三方服务政策变更造成的任何纠纷与损失，原插件作者及本项目维护者概不承担任何直接或间接法律责任。
 
