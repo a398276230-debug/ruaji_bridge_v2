@@ -1,0 +1,76 @@
+# ==========================================
+# 1. 依赖与构建
+# ==========================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ==========================================
+# 2. 真实配置文件与密钥凭据（绝不可上传）
+# ==========================================
+bridge.config.json
+.env
+.env.*
+!.env.example
+
+# ==========================================
+# 3. 运行期持久化缓存与日志
+# ==========================================
+.cache/
+shadow/
+tests/
+*.log
+*.log.*
+*.tmp*
+*.corrupt_*
+send_queue_archive/
+
+# ==========================================
+# 4. 业务数据与媒体文件（包含隐私/群聊数据）
+# ==========================================
+affection.json
+affection.json.*
+memes_data.json
+memes_data.json.*
+memes/
+received_images/
+received_files/
+chat_history/
+# 画像/插件运行期数据（含群聊发言原文与人格评价）
+data/
+
+# ==========================================
+# 5. 操作系统与 IDE 临时文件及私有文档
+# ==========================================
+docs/
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+
+# ==========================================
+# 6. AstrBot 统一宿主与插件生态 (astr/)
+# ==========================================
+astr/**/.venv/
+astr/**/.pytest_cache/
+astr/**/__pycache__/
+astr/**/data/
+astr/**/*.db
+astr/**/*.db-wal
+astr/**/*.db-shm
+astr/**/*.index
+astr/**/config.yaml
+!astr/**/config.example.yaml
+astr/unified_astrbot_host/tests/
+
+# ==========================================
+# 7.杂项
+# ==========================================
+start_mem0.*

@@ -1,0 +1,21 @@
+{
+  "name": "ruaji-bridge-v2",
+  "version": "2.0.0",
+  "description": "RUAJI Bridge v2 — NapCat / model / capability orchestration with an explicit event + capability protocol",
+  "type": "module",
+  "private": true,
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=18.13.0"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "shadow": "node src/index.js --mode=shadow",
+    "test": "node --test --test-concurrency=1 \"tests/**/*.test.js\"",
+    "replay": "node scripts/replay.js",
+    "migrate-config": "node scripts/migrate-config.js"
+  },
+  "dependencies": {
+    "ws": "^8.19.0"
+  }
+}

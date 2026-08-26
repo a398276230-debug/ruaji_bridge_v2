@@ -1,0 +1,34 @@
+{
+  "bot_language": "zh",
+  "session_manager": {
+    "enable_full_group_capture": true,
+    "max_sessions": 100,
+    "session_ttl": 3600,
+    "context_window_size": 50
+  },
+  "provider_settings": {
+    "embedding_provider_id": "",
+    "llm_provider_id": ""
+  },
+  "hermes_provider_settings": {
+    "llm_base_url": "http://127.0.0.1:8868/v1",
+    "llm_model": "gemini-3.7-flash-nv",
+    "llm_api_key": "sk-jiy8HZCSfiHKVc9QdqewHQxIhaLQYkZOwj5FlFx2fXfkRu9X",
+    "embedding_base_url": "https://ir.youzi.today/v1/embeddings",
+    "embedding_model": "Qwen3-Embedding-8B",
+    "embedding_api_key": "sk-zolCCbGtllFvTv1KCrQKXHOqDOOcfoIzgGSAFYJCJOp3Qg9l",
+    "embedding_dim": 1024,
+    "rerank_base_url": "https://ir.youzi.today/v1/rerank",
+    "rerank_model": "Qwen3-Reranker-8B",
+    "rerank_api_key": "sk-zolCCbGtllFvTv1KCrQKXHOqDOOcfoIzgGSAFYJCJOp3Qg9l"
+  },
+  "llm_base_url": "http://127.0.0.1:8868/v1",
+  "llm_model": "gemini-3.7-flash-nv",
+  "embedding_base_url": "https://ir.youzi.today/v1",
+  "embedding_model": "Qwen3-Embedding-8B",
+  "embedding_dim": "1024",
+  "embedding_api_key": "sk-zolCCbGtllFvTv1KCrQKXHOqDOOcfoIzgGSAFYJCJOp3Qg9l",
+  "rerank_base_url": "https://ir.youzi.today/v1",
+  "rerank_model": "Qwen3-Reranker-8B",
+  "rerank_api_key": "sk-zolCCbGtllFvTv1KCrQKXHOqDOOcfoIzgGSAFYJCJOp3Qg9l"
+}

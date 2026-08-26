@@ -1,0 +1,93 @@
+host:
+  name: 统一 AstrBot 宿主
+  data_dir: ./data
+  shadow_mode: true
+
+server:
+  host: 127.0.0.1
+  port: 8870
+  max_connections: 32
+  enrich_timeout_ms: 5000
+
+identity:
+  bot_name: BOT_NAME
+  robot_id: '1111111111'
+  owner_id: '1111111111'
+
+persona:
+  id: ruaji
+  system_prompt: ''
+
+providers:
+  mode: ${HERMES_PROVIDER_MODE:-live}
+  llm:
+    base_url: ${LLM_BASE_URL:-http://127.0.0.1:8868/v1}
+    model: ${LLM_MODEL:-gemini-3.7-flash-nv}
+    api_key_env: LLM_API_KEY
+    api_key: ${LLM_API_KEY:-""}
+    timeout_s: 120
+    max_retries: 2
+  embedding:
+    base_url: ${EMBEDDING_BASE_URL:-https://ir.youzi.today/v1/embeddings}
+    model: ${EMBEDDING_MODEL:-Qwen3-Embedding-8B}
+    api_key_env: EMBEDDING_API_KEY
+    api_key: ${EMBEDDING_API_KEY:-""}
+    dim: 1024
+    timeout_s: 30
+    max_retries: 3
+  rerank:
+    base_url: ${RERANK_BASE_URL:-https://ir.youzi.today/v1/rerank}
+    model: ${RERANK_MODEL:-Qwen3-Reranker-8B}
+    api_key_env: RERANK_API_KEY
+    api_key: ${RERANK_API_KEY:-""}
+    timeout_s: 20
+    max_retries: 2
+
+plugins:
+  living_memory:
+    package: astrbot_plugin_livingmemory
+    path: ../astrbot_plugin_livingmemory
+    enabled: true
+    config:
+      provider_settings:
+        embedding_provider_id: ''
+        llm_provider_id: ''
+        rerank_provider_id: ''
+      graph_memory:
+        enabled: true
+      filtering_settings:
+        memory_scope_mode: global
+      agent_tools:
+        enable_recall_tool: true
+        enable_memorize_tool: true
+  self_learning:
+    package: astrbot_plugin_self_learning
+    path: ../astrbot_plugin_self_learning
+    enabled: true
+    config:
+      Storage_Settings:
+        data_dir: ./data/plugin_data/astrbot_plugin_self_learning
+      Self_Learning_Basic:
+        enable_web_interface: true
+      Integration_Settings:
+        delegate_memory_to_livingmemory: true
+        disable_local_memory_when_delegated: true
+        livingmemory_plugin_name: LivingMemory
+      MaiBot_Enhancement:
+        enable_knowledge_graph: true
+        enable_memory_graph: true
+      Database_Settings:
+        db_type: sqlite
+  group_chat_plus:
+    package: astrbot_plugin_group_chat_plus
+    path: ../astrbot_plugin_group_chat_plus
+    enabled: true
+    config:
+      enable_web_panel: false
+      enable_group_chat: true
+      decision_ai_provider_id: ''
+
+hermes:
+  export_enabled: true
+  export_dir: ${HERMES_AGENT_DIR:-F:/hermes-agent}
+  tools_manifest: unified_host_tools.json

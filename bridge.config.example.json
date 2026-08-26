@@ -1,0 +1,254 @@
+{
+  "mode": "live",
+
+  "identity": {
+    "ownerId": "10000001",
+    "robotId": "11111111",
+    "botName": "BOT_NAME",
+    "rateLimitUsers": ["10000002"],
+    "privateWhitelist": ["10000001", "10000003"]
+  },
+
+  "napcat": {
+    "wsUrl": "ws://127.0.0.1:3001",
+    "httpUrl": "http://127.0.0.1:3000",
+    "accessTokenEnv": "NAPCAT_ACCESS_TOKEN",
+    "reconnect": { "minBackoffMs": 1000, "maxBackoffMs": 60000 },
+    "requestTimeoutMs": 8000,
+    "sendTimeoutMs": 30000
+  },
+
+  "model": {
+    "provider": "openai-compatible",
+    "baseUrl": "http://127.0.0.1:8642/v1",
+    "model": "hermes-agent",
+    "apiKeyEnv": "HERMES_API_KEY",
+    "sessionHeader": "X-Hermes-Session-Id",
+    "sessionPrefix": "qq_",
+    "timeoutMs": 1800000,
+    "stream": true,
+    "maxRetries": 0
+  },
+
+  "wake": {
+    "mode": "both",
+    "namePattern": "(^|[\\s，,。.!！?？~、；;:：])BOT_NAME"
+  },
+
+  "decision": {
+    "capability": "decision.group_reply",
+    "rateLimit": { "maxReplies": 5, "windowMs": 300000 },
+    "debounceMs": 800,
+    "localWindowSize": 15,
+    "localWindowInject": 6
+  },
+
+  "context": {
+    "totalCharacterBudget": 12000,
+    "perSourceCharacterBudget": 4000,
+    "collectTimeoutMs": 2500
+  },
+
+  "reply": {
+    "sendEnabled": true,
+    "sideEffectsEnabled": true,
+    "maxResponseChars": 100000,
+    "truncateToChars": 50000,
+    "maxSendAgeMs": 600000,
+    "maxSendRetries": 10
+  },
+
+  "fastAck": {
+    "enabled": true,
+    "message": "收到，已派给编程/画师，弄好叫你~",
+    "patterns": ["画一?张", "生成.*图", "comfyui", "画个", "帮我写.*代码", "重构", "跑一下.*测试"]
+  },
+
+  "storage": {
+    "legacyRoot": "..",
+    "affectionFile": "../affection.json",
+    "portrayalFile": "data/plugin_data/portrayal/profiles.json",
+    "memeDataFile": "../memes_data.json",
+    "memeRoot": "../memes",
+    "receivedImagesDir": "../received_images",
+    "receivedFilesDir": "../received_files",
+    "cacheDir": ".cache",
+    "shadowDir": "shadow"
+  },
+
+  "health": {
+    "port": 29996,
+    "lockPort": 29997
+  },
+
+  "web": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 29998,
+    "maxTraces": 200
+  },
+
+  "unifiedHost": {
+    "baseUrl": "http://127.0.0.1:8870"
+  },
+
+  "mem0": {
+    "enabled": true,
+    "baseUrl": "http://127.0.0.1:29990",
+    "userId": "ruaji",
+    "filterFile": "",
+    "timeoutMs": 15000
+  },
+
+  "meme": {
+    "autoCollect": true,
+    "autoAiTagging": true,
+    "visionBaseUrl": "http://127.0.0.1:8317/v1",
+    "visionModel": "gpt-4o-mini",
+    "visionKeyEnv": "CPA_API_KEY",
+    "visionKey": ""
+  },
+
+  "portrayal": {
+    "enabled": true,
+    "msgInterval": 50,
+    "initialThreshold": 20,
+    "cooldownHours": 24,
+    "blacklistUsers": [],
+    "model": "",
+    "baseUrl": "",
+    "apiKeyEnv": ""
+  },
+
+  "logging": {
+    "level": "info",
+    "file": "ruaji-bridge-v2.log",
+    "maxSizeBytes": 10485760,
+    "keepRotated": 5,
+    "logMessageBodies": false
+  },
+
+  "pipelines": {
+    "response.transform": ["affection", "result-decorate", "media-extract", "meme", "strip-markdown", "typing-delay"]
+  },
+
+  "plugins": [
+    {
+      "id": "group-chat-plus",
+      "version": "1.0.0",
+      "enabled": true,
+      "transport": "http",
+      "baseUrl": "http://127.0.0.1:8877",
+      "subscriptions": [],
+      "capabilities": [
+        {
+          "name": "decision.group_reply",
+          "priority": 100,
+          "path": "/api/on_group_message",
+          "method": "POST",
+          "timeoutMs": 7000,
+          "body": {
+            "gid": "{{groupId}}",
+            "uid": "{{userId}}",
+            "nickname": "{{displayName}}",
+            "message": "{{text}}",
+            "raw_message": "{{rawMessage}}",
+            "text_only": "{{text}}",
+            "message_id": "{{messageId}}",
+            "wake_mode": "{{wakeMode}}",
+            "is_at": "{{isAtBot}}"
+          }
+        },
+        {
+          "name": "context.enrich",
+          "priority": 90,
+          "path": "/api/get_and_consume_context",
+          "method": "GET",
+          "timeoutMs": 1500,
+          "query": {
+            "gid": "{{groupId}}",
+            "limit": 10,
+            "current_message_id": "{{messageId}}"
+          },
+          "resultPath": "context"
+        }
+      ],
+      "timeouts": { "connectMs": 1000, "requestMs": 7000 },
+      "retry": { "maxAttempts": 1, "backoffMs": 250 },
+      "breaker": { "threshold": 3, "cooldownMs": 60000 }
+    },
+    {
+      "id": "living-memory",
+      "version": "1.0.0",
+      "enabled": true,
+      "transport": "http",
+      "baseUrl": "http://127.0.0.1:8878",
+      "subscriptions": [
+        {
+          "event": "message.received",
+          "path": "/api/sideria/event",
+          "method": "POST",
+          "body": {
+            "post_type": "message",
+            "message_type": "{{messageType}}",
+            "message_id": "{{messageId}}",
+            "self_id": "{{selfId}}",
+            "user_id": "{{userId}}",
+            "group_id": "{{groupId}}",
+            "raw_message": "{{rawMessage}}",
+            "sender": { "user_id": "{{userId}}", "nickname": "{{displayName}}" },
+            "time": "{{timestamp}}"
+          }
+        }
+      ],
+      "capabilities": [],
+      "timeouts": { "connectMs": 1000, "requestMs": 2500 },
+      "retry": { "maxAttempts": 1, "backoffMs": 250 }
+    },
+    {
+      "id": "self-learning-upstream",
+      "version": "1.0.0",
+      "enabled": true,
+      "transport": "http",
+      "baseUrl": "http://127.0.0.1:8876",
+      "subscriptions": [
+        {
+          "event": "message.received",
+          "path": "/api/ingest",
+          "method": "POST",
+          "body": {
+            "uid": "{{userId}}",
+            "nickname": "{{displayName}}",
+            "group_id": "{{groupId}}",
+            "message": "{{text}}",
+            "is_at": "{{isAtBot}}"
+          }
+        }
+      ],
+      "capabilities": [],
+      "timeouts": { "connectMs": 1000, "requestMs": 2000 },
+      "retry": { "maxAttempts": 1, "backoffMs": 250 }
+    },
+    {
+      "id": "mem0-vector",
+      "version": "1.0.0",
+      "enabled": false,
+      "transport": "http",
+      "baseUrl": "http://127.0.0.1:8870",
+      "subscriptions": [],
+      "capabilities": [
+        {
+          "name": "context.enrich",
+          "priority": 40,
+          "path": "/memories/search",
+          "method": "POST",
+          "timeoutMs": 1200,
+          "body": { "query": "{{text}}", "user_id": "{{sessionId}}", "limit": 5 },
+          "resultPath": "results"
+        }
+      ],
+      "timeouts": { "connectMs": 800, "requestMs": 1200 },
+      "retry": { "maxAttempts": 1, "backoffMs": 200 }
+    }
+  ]
+}

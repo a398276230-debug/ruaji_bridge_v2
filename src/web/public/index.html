@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RUAJI Bridge v2 · 运维控制台</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🐭</text></svg>">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">🐭</span>
+      <div>
+        <h1>RUAJI Bridge v2</h1>
+        <p class="sub" id="brand-sub">运维与调试控制台</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span class="pill" id="mode-pill">—</span>
+      <span class="pill ghost" id="uptime-pill">—</span>
+      <label class="autorefresh">
+        <input type="checkbox" id="autorefresh" checked>
+        <span>自动刷新</span>
+      </label>
+      <button class="btn" id="refresh-btn">刷新</button>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-view="overview">系统大盘</button>
+    <button class="tab" data-view="host">统一宿主 & 模型池</button>
+    <button class="tab" data-view="plugins-portal">插件聚合门户</button>
+    <button class="tab" data-view="traces">全链路追踪</button>
+    <button class="tab" data-view="sandbox">离线沙箱</button>
+    <button class="tab" data-view="shadow">影子对比</button>
+    <button class="tab" data-view="affection">好感度</button>
+    <button class="tab" data-view="portrayal">群友画像</button>
+    <button class="tab" data-view="memes">表情包</button>
+    <button class="tab" data-view="settings">客制化设置</button>
+  </nav>
+
+  <main id="main">
+    <!-- ============ 系统大盘 ============ -->
+    <section class="view active" id="view-overview">
+      <h2 class="section-title">组件健康</h2>
+      <div class="cards" id="component-cards"></div>
+
+      <h2 class="section-title">运行指标</h2>
+      <div class="stat-grid" id="metric-tiles"></div>
+
+      <div class="split">
+        <div class="panel">
+          <h3>Middleware 执行延迟</h3>
+          <div class="table-wrap"><table id="middleware-table"><thead>
+            <tr><th>Middleware</th><th class="num">调用</th><th class="num">平均 (ms)</th><th class="num">峰值 (ms)</th></tr>
+          </thead><tbody></tbody></table></div>
+        </div>
+        <div class="panel">
+          <h3>裁决分布</h3>
+          <div class="table-wrap"><table id="decision-table"><thead>
+            <tr><th>路由</th><th class="num">次数</th></tr>
+          </thead><tbody></tbody></table></div>
+        </div>
+      </div>
+
+      <h2 class="section-title">熔断监控</h2>
+      <div class="table-wrap"><table id="circuit-table"><thead>
+        <tr><th>断路器</th><th>状态</th><th class="num">失败/阈值</th><th class="num">累计打开</th><th>下次探测</th><th>最后错误</th></tr>
+      </thead><tbody></tbody></table></div>
+
+      <h2 class="section-title">能力 Provider 与插件</h2>
+      <div class="split">
+        <div class="panel"><h3>能力总线</h3><div id="capability-list" class="kv-list"></div></div>
+        <div class="panel"><h3>插件可达性</h3><div id="plugin-list" class="kv-list"></div></div>
+      </div>
+    </section>
+
+    <!-- ============ 全链路追踪 ============ -->
+    <section class="view" id="view-traces">
+      <div class="toolbar">
+        <input type="search" id="trace-q" placeholder="按 correlationId / messageId / 内容 / 昵称 检索…">
+        <select id="trace-route">
+          <option value="">全部路由</option>
+          <option value="direct">direct</option>
+          <option value="auto">auto</option>
+          <option value="ignore">ignore</option>
+          <option value="command">command</option>
+        </select>
+        <button class="btn" id="trace-search">检索</button>
+        <button class="btn ghost" id="trace-clear">清空缓冲</button>
+        <span class="hint" id="trace-count"></span>
+      </div>
+      <div class="split trace-split">
+        <div class="panel scroll" id="trace-list"></div>
+        <div class="panel scroll" id="trace-detail">
+          <p class="empty">从左侧选一条消息，查看它的完整生命周期时序。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 离线沙箱 ============ -->
+    <section class="view" id="view-sandbox">
+      <div class="split sandbox-split">
+        <div class="panel">
+          <h3>构造一条虚拟消息</h3>
+          <form id="sandbox-form" class="form">
+            <label>会话类型
+              <select name="messageType" id="sb-type">
+                <option value="group">群聊</option>
+                <option value="private">私聊</option>
+              </select>
+            </label>
+            <label id="sb-group-wrap">群号
+              <input name="groupId" id="sb-group" value="707423412">
+            </label>
+            <label>发送人 QQ
+              <input name="userId" id="sb-user">
+            </label>
+            <label>昵称
+              <input name="nickname" id="sb-nick" value="沙箱用户">
+            </label>
+            <label class="full">消息内容
+              <textarea name="text" id="sb-text" rows="3">瑞姬，帮我看看这段配置</textarea>
+            </label>
+            <label class="check" id="sb-at-wrap">
+              <input type="checkbox" name="isAtBot" id="sb-at" checked> @机器人
+            </label>
+            <label class="check">
+              <input type="checkbox" name="callModel" id="sb-callmodel"> 调用真实模型
+              <span class="hint">不勾则用下方文本当模型输出（离线默认）</span>
+            </label>
+            <label class="full">模拟模型回复
+              <textarea name="mockReply" id="sb-mock" rows="4">好的，我看看。
+
+配置没问题，直接跑就行。</textarea>
+            </label>
+            <label class="check">
+              <input type="checkbox" name="runFinalPass" id="sb-final"> 跑收尾轮（会触发好感度写入）
+            </label>
+            <button class="btn primary" type="submit" id="sb-run">单步执行</button>
+          </form>
+          <div class="note" id="sb-note"></div>
+        </div>
+        <div class="panel scroll" id="sandbox-result">
+          <p class="empty">点「单步执行」，这里会逐段展开整条管线的输入输出。</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 影子对比 ============ -->
+    <section class="view" id="view-shadow">
+      <div class="toolbar">
+        <select id="shadow-file"></select>
+        <button class="btn" id="shadow-load">加载</button>
+        <span class="hint" id="shadow-hint"></span>
+      </div>
+      <div class="stat-grid" id="shadow-tiles"></div>
+      <h2 class="section-title">逐条决策对照</h2>
+      <div class="table-wrap"><table id="shadow-table"><thead>
+        <tr><th>时间</th><th>correlationId</th><th>v2 裁决</th><th>旧 Bridge</th><th>一致</th><th>原因</th><th class="num">段数</th><th class="num">耗时</th><th>上下文来源</th></tr>
+      </thead><tbody></tbody></table></div>
+      <h2 class="section-title">已知的有意识差异（不计入失配）</h2>
+      <div id="shadow-diffs" class="kv-list"></div>
+    </section>
+
+    <!-- ============ 好感度 ============ -->
+    <section class="view" id="view-affection">
+      <div class="toolbar">
+        <input type="search" id="aff-q" placeholder="按 QQ / 昵称 / 关系搜索…">
+        <button class="btn" id="aff-search">搜索</button>
+        <span class="hint" id="aff-hint"></span>
+      </div>
+      <div class="table-wrap"><table id="aff-table"><thead>
+        <tr><th>QQ</th><th>昵称</th><th class="num">好感度</th><th>进度</th><th>关系</th><th>画像状态</th><th class="num">互动</th><th>最近变更</th><th>操作</th></tr>
+      </thead><tbody></tbody></table></div>
+    </section>
+
+    <!-- ============ 群友画像 ============ -->
+    <section class="view" id="view-portrayal">
+      <div class="toolbar">
+        <input type="search" id="portrayal-q" placeholder="按 QQ / 昵称 / 标签 / 简述搜索画像…">
+        <button class="btn" id="portrayal-search">搜索</button>
+        <button class="btn primary" id="portrayal-refresh-all">🔄 刷新列表</button>
+        <span class="hint" id="portrayal-hint"></span>
+      </div>
+
+      <div style="margin-top: 14px; display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-sm primary" id="portrayal-tab-cards">🌟 已生成画像 (<span id="portrayal-count-ready">0</span>)</button>
+          <button class="btn btn-sm ghost" id="portrayal-tab-tracked">📥 原始消息收纳池 (<span id="portrayal-count-tracked">0</span>)</button>
+        </div>
+        <div>
+          <button class="btn btn-sm ghost btn-del" id="portrayal-clear-unprofiled-btn" title="清理所有只有发言记录但未生成画像的群友缓存">🗑️ 清理无画像收纳</button>
+        </div>
+      </div>
+
+      <div class="cards" id="portrayal-cards" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:16px; margin-top:16px;"></div>
+
+      <div class="table-wrap" id="portrayal-tracked-wrap" style="display:none; margin-top:16px;">
+        <table id="portrayal-tracked-table">
+          <thead>
+            <tr><th>QQ</th><th>群友昵称</th><th class="num">已收纳发言数</th><th class="num">上次分析时条数</th><th>自动分析状态</th><th>最后活跃时间</th><th>操作</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ 表情包 ============ -->
+    <section class="view" id="view-memes">
+      <div class="toolbar">
+        <input type="search" id="meme-q" placeholder="按 ID / 标签 / 描述 过滤图库…">
+        <button class="btn" id="meme-filter">过滤</button>
+        <span class="divider"></span>
+        <input type="search" id="meme-tag" placeholder="输入 Tag 模拟主链路检索…">
+        <button class="btn primary" id="meme-test">检索测试</button>
+        <span class="hint" id="meme-hint"></span>
+      </div>
+      <div id="meme-test-result"></div>
+      <div class="meme-grid" id="meme-grid"></div>
+    </section>
+    <!-- ============ 客制化设置 ============ -->
+    <section class="view" id="view-settings">
+      <div class="toolbar cfg-toolbar">
+        <div class="toolbar-left">
+          <span class="badge-tag">⚙️ 实时配置面板</span>
+          <span class="hint" id="cfg-file-hint">加载中…</span>
+        </div>
+        <div class="toolbar-right">
+          <button class="btn ghost" id="cfg-reload">🔄 重新载入</button>
+          <button class="btn primary" id="cfg-save">💾 保存并应用配置</button>
+        </div>
+      </div>
+
+      <div class="cfg-grid">
+        <!-- 卡片 1: 身份标识与唤醒 -->
+        <div class="cfg-card">
+          <div class="cfg-card-header">
+            <span class="cfg-icon">🐭</span>
+            <h3>身份与唤醒设置</h3>
+          </div>
+          <div class="cfg-card-body">
+            <div class="field-row">
+              <label>主人 QQ 号 (ownerId)
+                <input type="text" id="cfg-owner-id" placeholder="如: 10000001">
+                <span class="field-desc">拥有最高管理指令与即时打断特权</span>
+              </label>
+              <label>机器人 QQ 号 (robotId)
+                <input type="text" id="cfg-robot-id" placeholder="如: 11111111">
+                <span class="field-desc">用于过滤自身消息与识别真 @ 触发</span>
+              </label>
+            </div>
+            <div class="field-row">
+              <label>机器人称谓/唤醒名 (botName)
+                <input type="text" id="cfg-bot-name" placeholder="如: 瑞姬">
+                <span class="field-desc">机器人的常用名字</span>
+              </label>
+              <label>唤醒响应模式 (wake.mode)
+                <select id="cfg-wake-mode">
+                  <option value="both">真 @ 与名字呼唤双触发 (推荐)</option>
+                  <option value="at">仅响应真 @</option>
+                  <option value="name">仅响应名字呼唤</option>
+                </select>
+                <span class="field-desc">在群聊中触发机器人回复的判定机制</span>
+              </label>
+            </div>
+            <div class="field-row single">
+              <label>唤醒词匹配正则表达式 (wake.namePattern)
+                <input type="text" id="cfg-wake-pattern" placeholder="(^|[\s，,。.!！?？~、；;:：])瑞姬">
+                <span class="field-desc">名字呼唤的正向正则表达式（保护句中非标点边界的误触发）</span>
+              </label>
+            </div>
+            <div class="field-row single">
+              <label>频控名单用户 (rateLimitUsers)
+                <input type="text" id="cfg-ratelimit-users" placeholder="用逗号或空格分隔多个 QQ 号">
+                <span class="field-desc">限制触发频率的用户 QQ，超出 5 分钟 5 次限制后静默忽略</span>
+              </label>
+            </div>
+            <div class="field-row single">
+              <label>私聊白名单用户 (privateWhitelist)
+                <input type="text" id="cfg-private-whitelist" placeholder="用逗号或空格分隔多个 QQ 号，如: 10000001, 10000003">
+                <span class="field-desc">仅允许白名单内的 QQ 用户私聊触发机器人（主人默认恒放行），非白名单在入口处直接拦截丢弃。<strong>留空即“仅主人可私聊”</strong>，不是关闭此功能</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- 卡片 2: 表情包与视觉识别模型 -->
+        <div class="cfg-card">
+          <div class="cfg-card-header">
+            <span class="cfg-icon">🖼️</span>
+            <h3>表情包与视觉打标 (Vision AI)</h3>
+          </div>
+          <div class="cfg-card-body">
+            <div class="field-row-checks">
+              <label class="check">
+                <input type="checkbox" id="cfg-meme-collect"> 启用群聊表情包自动收集
+              </label>
+              <label class="check">
+                <input type="checkbox" id="cfg-meme-autotag"> 启用 AI 视觉识图自动打标
+              </label>
+            </div>
+            <div class="field-row">
+              <label>识图 API Base URL
+                <input type="text" id="cfg-meme-vision-url" placeholder="http://127.0.0.1:8317/v1">
+                <span class="field-desc">兼容 OpenAI Chat Completions 视觉接口（如 CPA / gemini-proxy）</span>
+              </label>
+              <label>识图模型名称
+                <div class="input-with-preset">
+                  <input type="text" id="cfg-meme-vision-model" placeholder="gpt-4o-mini" list="preset-vision-models">
+                  <datalist id="preset-vision-models">
+                    <option value="gpt-4o-mini"></option>
+                    <option value="gemini-2.5-flash"></option>
+                    <option value="gemini-3-flash-preview"></option>
+                    <option value="qwen-vl-max"></option>
+                    <option value="deepseek-v4-flash-stfree"></option>
+                  </datalist>
+                </div>
+                <span class="field-desc">用于分析表情包画面、文字梗并生成标签</span>
+              </label>
+            </div>
+            <div class="field-row">
+              <label>视觉 API Key
+                <input type="password" id="cfg-meme-vision-key" placeholder="留空或掩码保持不变">
+                <span class="field-desc" id="cfg-meme-vision-key-desc">未配置独立 Key 时复用环境变量</span>
+              </label>
+              <label>环境变量引用名
+                <input type="text" id="cfg-meme-vision-env" placeholder="CPA_API_KEY">
+                <span class="field-desc">优先从指定环境变量读取密钥</span>
+              </label>
+            </div>
+            <div class="test-action-bar">
+              <button class="btn secondary" id="cfg-test-vision-btn" type="button">⚡ 测试识图模型连通性</button>
+              <span class="test-status" id="cfg-test-vision-res"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 卡片 3: 群友性格画像与自动化分析 (Portrayal AI) -->
+        <div class="cfg-card">
+          <div class="cfg-card-header">
+            <span class="cfg-icon">🔮</span>
+            <h3>群友性格画像与自动化分析 (Portrayal AI)</h3>
+          </div>
+          <div class="cfg-card-body">
+            <div class="field-row-checks">
+              <label class="check">
+                <input type="checkbox" id="cfg-portrayal-enabled" checked> 启用群友发言自动提炼画像
+              </label>
+            </div>
+            <div class="field-row">
+              <label>分析触发增量条数 (条)
+                <input type="number" id="cfg-portrayal-interval" placeholder="50">
+                <span class="field-desc">用户发言增量满多少条后触发分析</span>
+              </label>
+              <label>首次分析初始门槛 (条)
+                <input type="number" id="cfg-portrayal-initial" placeholder="20">
+                <span class="field-desc">新用户初次分析所需的最少发言数</span>
+              </label>
+            </div>
+            <div class="field-row">
+              <label>分析冷却间隔 (小时)
+                <input type="number" id="cfg-portrayal-cooldown" placeholder="24">
+                <span class="field-desc">单用户两次分析之间的最小时间间隔</span>
+              </label>
+              <label>画像分析专用模型
+                <input type="text" id="cfg-portrayal-model" placeholder="留空 = 复用主对话模型" list="preset-vision-models">
+                <span class="field-desc">建议用快速轻量级模型；留空则复用主对话模型</span>
+              </label>
+            </div>
+            <div class="field-row">
+              <label>分析模型 Base URL
+                <input type="text" id="cfg-portrayal-url" placeholder="留空 = 复用主对话模型">
+                <span class="field-desc">填了才会给画像任务单开一路模型通道，留空则走主对话模型</span>
+              </label>
+              <label>API Key 环境变量
+                <input type="text" id="cfg-portrayal-env" placeholder="HERMES_API_KEY">
+                <span class="field-desc">读取密钥的环境变量名，仅在上面填了 Base URL 时生效</span>
+              </label>
+            </div>
+            <div class="field-row single">
+              <label>画像黑名单/机器人排除 (blacklistUsers)
+                <input type="text" id="cfg-portrayal-blacklist" placeholder="用逗号或空格分隔多个 QQ 号，如: 3168805831">
+                <span class="field-desc">排除群内其他 Bot 或指定用户，不记录其发言，永不消耗 Token 进行分析</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- 卡片 4: 主对话模型设置 -->
+        <div class="cfg-card">
+          <div class="cfg-card-header">
+            <span class="cfg-icon">🧠</span>
+            <h3>主对话模型设置 (Main LLM)</h3>
+          </div>
+          <div class="cfg-card-body">
+            <div class="field-row">
+              <label>模型 API Base URL
+                <input type="text" id="cfg-model-base-url" placeholder="http://127.0.0.1:8642/v1">
+                <span class="field-desc">Hermes API 网关或第三方 OpenAI 兼容端点</span>
+              </label>
+              <label>对话模型名称
+                <div class="input-with-preset">
+                  <input type="text" id="cfg-model-name" placeholder="hermes-agent" list="preset-dialog-models">
+                  <datalist id="preset-dialog-models">
+                    <option value="hermes-agent"></option>
+                    <option value="gpt-5.6-sol"></option>
+                    <option value="gpt-5.6-luna"></option>
+                    <option value="gemini-3.7-flash"></option>
+                    <option value="deepseek-chat"></option>
+                    <option value="glm-5.2"></option>
+                  </datalist>
+                </div>
+                <span class="field-desc">主对话与日常消息生成所使用的模型标识</span>
+              </label>
+            </div>
+            <div class="field-row">
+              <label>模型 API Key
+                <input type="password" id="cfg-model-key" placeholder="留空或掩码保持不变">
+                <span class="field-desc" id="cfg-model-key-desc">未配置独立 Key 时使用环境变量</span>
+              </label>
+              <label>API Key 环境变量名
+                <input type="text" id="cfg-model-env" placeholder="HERMES_API_KEY">
+                <span class="field-desc">生产环境下推荐通过环境变量注入</span>
+              </label>
+            </div>
+            <div class="field-row">
+              <label>请求超时时间 (毫秒)
+                <input type="number" id="cfg-model-timeout" placeholder="1800000">
+                <span class="field-desc">单次模型推理等待上限，默认 1800000ms (30分钟)</span>
+              </label>
+              <label class="check check-inline">
+                <input type="checkbox" id="cfg-model-stream" checked> 启用流式切句传输 (Stream SSE)
+              </label>
+            </div>
+            <div class="test-action-bar">
+              <button class="btn secondary" id="cfg-test-model-btn" type="button">⚡ 测试主模型连通性</button>
+              <span class="test-status" id="cfg-test-model-res"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 卡片 4: 快速应答与长任务派发 -->
+        <div class="cfg-card">
+          <div class="cfg-card-header">
+            <span class="cfg-icon">⚡</span>
+            <h3>快速确认与长任务派发 (Fast Ack)</h3>
+          </div>
+          <div class="cfg-card-body">
+            <div class="field-row-checks">
+              <label class="check">
+                <input type="checkbox" id="cfg-fastack-enabled"> 启用长任务快速确认 (先秒回再派发)
+              </label>
+            </div>
+            <div class="field-row single">
+              <label>快速确认应答文案
+                <input type="text" id="cfg-fastack-msg" placeholder="收到，已派给编程/画师，弄好叫你~">
+                <span class="field-desc">命中正则后立即回给用户的占位提示语</span>
+              </label>
+            </div>
+            <div class="field-row single">
+              <label>触发匹配正则表达式列表 (每行一条)
+                <textarea id="cfg-fastack-patterns" rows="4" placeholder="画一?张&#10;生成.*图&#10;comfyui&#10;画个&#10;帮我写.*代码&#10;重构&#10;跑一下.*测试"></textarea>
+                <span class="field-desc">当用户消息命中任意一条正则时触发 Fast Ack 快速回执</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- 卡片 5: 群聊接话与上下文策略 -->
+        <div class="cfg-card">
+          <div class="cfg-card-header">
+            <span class="cfg-icon">💬</span>
+            <h3>自动接话与上下文决策 (Decision & Context)</h3>
+          </div>
+          <div class="cfg-card-body">
+            <div class="field-row">
+              <label>连续消息防抖延迟 (毫秒)
+                <input type="number" id="cfg-decision-debounce" placeholder="800">
+                <span class="field-desc">将同用户快速连续发送的多条消息合并为单次生成</span>
+              </label>
+              <label>决策限流窗口 (毫秒)
+                <input type="number" id="cfg-decision-window" placeholder="300000">
+                <span class="field-desc">群聊主动接话的滑动时间窗口</span>
+              </label>
+            </div>
+            <div class="field-row">
+              <label>窗口内最大回复条数
+                <input type="number" id="cfg-decision-max-replies" placeholder="5">
+                <span class="field-desc">防止群内接话过频的硬上限</span>
+              </label>
+              <label>本地群滑窗缓存大小 (条数)
+                <input type="number" id="cfg-decision-window-size" placeholder="15">
+                <span class="field-desc">保留最近多少条群聊消息作为上下文</span>
+              </label>
+            </div>
+            <div class="field-row">
+              <label>上下文总字符预算 (字数)
+                <input type="number" id="cfg-context-total-budget" placeholder="12000">
+                <span class="field-desc">聚合全部上下文来源的字符上限</span>
+              </label>
+              <label>单来源字符预算 (字数)
+                <input type="number" id="cfg-context-source-budget" placeholder="4000">
+                <span class="field-desc">防止单一插件或滑窗撑爆上下文</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <!-- 卡片 6: NapCat 接入与运行控制 -->
+        <div class="cfg-card">
+          <div class="cfg-card-header">
+            <span class="cfg-icon">🔌</span>
+            <h3>NapCat 协议端与运行模式</h3>
+          </div>
+          <div class="cfg-card-body">
+            <div class="field-row">
+              <label>运行模式 (mode)
+                <select id="cfg-mode">
+                  <option value="live">Live (真实运行模式)</option>
+                  <option value="shadow">Shadow (影子对照模式，只读无发信)</option>
+                </select>
+                <span class="field-desc">影子模式下将强制拦截全部消息发送与数据写盘</span>
+              </label>
+              <label>日志输出级别
+                <select id="cfg-log-level">
+                  <option value="debug">DEBUG (详尽调试信息)</option>
+                  <option value="info">INFO (常规运行信息)</option>
+                  <option value="warn">WARN (仅告警与错误)</option>
+                  <option value="error">ERROR (仅严重错误)</option>
+                </select>
+                <span class="field-desc">控制终端与日志文件的输出详尽程度</span>
+              </label>
+            </div>
+            <div class="field-row-checks">
+              <label class="check">
+                <input type="checkbox" id="cfg-reply-send"> 允许向 QQ 发送真实回复 (sendEnabled)
+              </label>
+              <label class="check">
+                <input type="checkbox" id="cfg-reply-side-effects"> 允许好感度与数据落盘 (sideEffectsEnabled)
+              </label>
+              <label class="check">
+                <input type="checkbox" id="cfg-log-bodies"> 日志记录消息明文正文 (logMessageBodies)
+              </label>
+            </div>
+            <div class="field-row">
+              <label>NapCat WebSocket 地址
+                <input type="text" id="cfg-napcat-ws" placeholder="ws://127.0.0.1:3001">
+                <span class="field-desc">正向 WS 事件接收端点</span>
+              </label>
+              <label>NapCat HTTP API 地址
+                <input type="text" id="cfg-napcat-http" placeholder="http://127.0.0.1:3000">
+                <span class="field-desc">OneBot HTTP API 发信端点</span>
+              </label>
+            </div>
+            <div class="field-row">
+              <label>NapCat Access Token
+                <input type="password" id="cfg-napcat-token" placeholder="留空或掩码保持不变">
+                <span class="field-desc">NapCat 连接鉴权 Token（默认: napcat）</span>
+              </label>
+              <label>统一宿主 (Unified Host) 地址
+                <input type="text" id="cfg-unified-host" placeholder="http://127.0.0.1:8870">
+                <span class="field-desc">GCP/LivingMemory 统一 AstrBot 宿主服务地址</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 统一宿主 & 模型池 ============ -->
+    <section class="view" id="view-host">
+      <h2 class="section-title">统一宿主总览 (Unified AstrBot Host)</h2>
+      <div class="cards" id="host-overview-cards"></div>
+
+      <h2 class="section-title">接口供应商池 (Providers Channel Pool)</h2>
+      <div class="table-wrap">
+        <table id="providers-table">
+          <thead>
+            <tr><th>接口通道 ID</th><th>通道类型</th><th>Base URL</th><th>API Key 状态</th><th>操作</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <h2 class="section-title">持久化存储分布 (data/plugin_data)</h2>
+      <div class="table-wrap">
+        <table id="host-storage-table">
+          <thead>
+            <tr><th>插件 / 模块</th><th>磁盘占用</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ 插件聚合门户 ============ -->
+    <section class="view" id="view-plugins-portal">
+      <div class="toolbar" id="plugin-tabs-bar" style="margin-bottom: 12px;"></div>
+      <div id="plugin-portal-frame-container" style="width: 100%; height: 75vh; background: var(--bg-card); border-radius: 8px; border: 1px solid var(--border); overflow: hidden; position: relative;">
+        <div id="plugin-portal-placeholder" style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-dim);">
+          <span>正在加载插件页面…</span>
+        </div>
+        <iframe id="plugin-portal-iframe" style="width: 100%; height: 100%; border: none; display: none;"></iframe>
+      </div>
+    </section>
+  </main>
+
+  <!-- 表情包编辑模态框 -->
+  <div id="meme-edit-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:#151821; border:1px solid rgba(255,255,255,0.15); border-radius:10px; width:480px; max-width:92vw; padding:22px; box-shadow:0 20px 50px rgba(0,0,0,0.85); color:#e2e8f0;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:12px;">
+        <h3 style="margin:0; font-size:16px; font-weight:600; color:#fff;">✏️ 编辑表情包元数据</h3>
+        <button class="btn btn-sm ghost" id="meme-edit-close" style="color:#94a3b8; font-size:14px; padding:2px 8px;">✕</button>
+      </div>
+      <div style="display:flex; gap:16px; margin-bottom:16px; align-items:center; background:#0e1017; padding:10px; border-radius:8px; border:1px solid rgba(255,255,255,0.06);">
+        <img id="meme-edit-preview" src="" style="width:72px; height:72px; object-fit:contain; border-radius:6px; background:#07080c; border:1px solid rgba(255,255,255,0.1);">
+        <div style="flex:1;">
+          <label style="font-size:11px; color:#94a3b8; display:block; margin-bottom:4px;">唯一代码 (系统管理，无需编辑)</label>
+          <input type="text" id="meme-edit-ref" readonly style="width:100%; opacity:0.8; cursor:not-allowed; background:#1c202c; border:1px solid rgba(255,255,255,0.08); color:#cbd5e1; font-family:monospace; font-size:11.5px; padding:6px 8px; border-radius:4px;">
+        </div>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <div>
+          <label style="font-size:12px; color:#94a3b8; display:block; margin-bottom:4px;">所属分类</label>
+          <input type="text" id="meme-edit-category" placeholder="如: 常用、摸鱼、可爱" style="width:100%; background:#0e1017; border:1px solid rgba(255,255,255,0.12); color:#fff; padding:7px 10px; border-radius:6px;">
+        </div>
+        <div>
+          <label style="font-size:12px; color:#94a3b8; display:block; margin-bottom:4px;">主标签 (Tag)</label>
+          <input type="text" id="meme-edit-tag" placeholder="简要情绪/动作标签，如: 问号、吃瓜" style="width:100%; background:#0e1017; border:1px solid rgba(255,255,255,0.12); color:#fff; padding:7px 10px; border-radius:6px;">
+        </div>
+        <div>
+          <label style="font-size:12px; color:#94a3b8; display:block; margin-bottom:4px;">情绪关键词 (逗号或斜杠分隔)</label>
+          <input type="text" id="meme-edit-keywords" placeholder="如: 疑惑, 震惊, 懵逼" style="width:100%; background:#0e1017; border:1px solid rgba(255,255,255,0.12); color:#fff; padding:7px 10px; border-radius:6px;">
+        </div>
+        <div>
+          <label style="font-size:12px; color:#94a3b8; display:block; margin-bottom:4px;">语境与画面描述</label>
+          <textarea id="meme-edit-desc" rows="3" placeholder="适合在什么聊天语境中发送" style="width:100%; background:#0e1017; border:1px solid rgba(255,255,255,0.12); color:#fff; padding:7px 10px; border-radius:6px; resize:vertical; line-height:1.4;"></textarea>
+        </div>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:20px; border-top:1px solid rgba(255,255,255,0.08); padding-top:14px;">
+        <button class="btn ghost" id="meme-edit-cancel" style="background:#1e2330; border:1px solid rgba(255,255,255,0.1); color:#94a3b8;">取消</button>
+        <button class="btn primary" id="meme-edit-save" style="background:var(--accent); color:#fff;">💾 保存修改</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

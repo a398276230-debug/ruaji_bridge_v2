@@ -1,0 +1,32 @@
+{
+  "web_panel_protected_ips": [
+    "127.0.0.1",
+    "::1"
+  ],
+  "web_panel_ip_mode": "disabled",
+  "enable_group_chat": true,
+  "enabled_groups": [
+    "707423412"
+  ],
+  "enable_group_wait_window": true,
+  "group_wait_window_duration": 3.0,
+  "trigger_keywords": [],
+  "enable_decision_ai": true,
+  "web_panel_port": 1451,
+  "enable_proactive_chat": false,
+  "enable_proactive_ai_judge": true,
+  "proactive_enabled_groups": [],
+  "proactive_probability": 0.3,
+  "initial_probability": 0.02,
+  "enable_attention_mechanism": true,
+  "enable_humanize_mode": true,
+  "enable_conversation_fatigue": true,
+  "enable_message_quality_scoring": true,
+  "enable_ignore_at_all": true,
+  "after_reply_probability": 0.2,
+  "probability_duration": 30,
+  "enable_debug_log": true,
+  "attention_max_tracked_users": 5,
+  "attention_boost_step": 0.2,
+  "decision_ai_reasoning_log": true
+}

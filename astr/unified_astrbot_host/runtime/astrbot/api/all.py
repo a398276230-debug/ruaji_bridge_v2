@@ -1,0 +1,130 @@
+"""astrbot.api.all —— 一次性把常用东西全拉进来。
+
+老插件的写法（`from astrbot.api.all import *`）。上游保留它是为了兼容，
+垫片照做，否则 34 处导入要逐个改插件源码 —— 而"不改一行业务代码"是本次的前提。
+"""
+
+from astrbot.api import AstrBotConfig, logger, sp
+
+# GCP 里是 `from astrbot.api.all import *` 之后直接写 `@event_message_type(...)`
+# 和 `EventMessageType.ALL`（main.py:3952），所以过滤器的短名也得在这一层出现。
+from astrbot.api.event.filter import *  # noqa: F403
+from astrbot.api.event.filter import (
+    EventMessageType,
+    PermissionType,
+    PlatformAdapterType,
+    after_message_sent,
+    command,
+    command_group,
+    event_message_type,
+    llm_tool,
+    on_decorating_result,
+    on_llm_request,
+    on_llm_response,
+    on_platform_loaded,
+    permission_type,
+    platform_adapter_type,
+    regex,
+)
+from astrbot.api.event import (
+    CommandResult,
+    EventResultType,
+    MessageChain,
+    MessageEventResult,
+    ResultContentType,
+    filter,  # noqa: A004
+)
+from astrbot.api.message_components import (
+    At,
+    AtAll,
+    BaseMessageComponent,
+    ComponentType,
+    Face,
+    File,
+    Forward,
+    Image,
+    Json,
+    Node,
+    Nodes,
+    Plain,
+    Poke,
+    Record,
+    Reply,
+    Unknown,
+    Video,
+    WechatEmoji,
+    Xml,
+)
+from astrbot.api.platform import (
+    AstrBotMessage,
+    AstrMessageEvent,
+    Group,
+    MessageMember,
+    MessageSession,
+    MessageType,
+    Platform,
+    PlatformMetadata,
+)
+from astrbot.api.provider import LLMResponse, Provider, ProviderRequest
+from astrbot.api.star import Context, Star, StarTools, register
+
+__all__ = [
+    "AstrBotConfig",
+    "AstrBotMessage",
+    "AstrMessageEvent",
+    "At",
+    "AtAll",
+    "BaseMessageComponent",
+    "CommandResult",
+    "ComponentType",
+    "Context",
+    "EventMessageType",
+    "EventResultType",
+    "Face",
+    "File",
+    "Forward",
+    "Group",
+    "Image",
+    "Json",
+    "LLMResponse",
+    "MessageChain",
+    "MessageEventResult",
+    "MessageMember",
+    "MessageSession",
+    "MessageType",
+    "Node",
+    "Nodes",
+    "PermissionType",
+    "Plain",
+    "Platform",
+    "PlatformAdapterType",
+    "PlatformMetadata",
+    "Poke",
+    "Provider",
+    "ProviderRequest",
+    "Record",
+    "Reply",
+    "ResultContentType",
+    "Star",
+    "StarTools",
+    "Unknown",
+    "Video",
+    "WechatEmoji",
+    "Xml",
+    "after_message_sent",
+    "command",
+    "command_group",
+    "event_message_type",
+    "filter",
+    "llm_tool",
+    "logger",
+    "on_decorating_result",
+    "on_llm_request",
+    "on_llm_response",
+    "on_platform_loaded",
+    "permission_type",
+    "platform_adapter_type",
+    "regex",
+    "register",
+    "sp",
+]
