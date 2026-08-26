@@ -1,24 +1,15 @@
 """runtime.context —— 统一宿主的运行时。
 
-一个进程、一份 Context、三个插件。这个类负责把它们装起来、连上 Provider、
+一个进程、一份 Context、挂载插件。这个类负责把它们装起来、连上 Provider、
 并在关闭时按逆序拆掉。
 
-## 装配顺序（不可随意调整）
+## 装配顺序
 
-    1. GatewayClient          出站 HTTP 连接池（三个插件共用一个）
+    1. GatewayClient          出站 HTTP 连接池
     2. Provider 注册           LLM / Embedding / Rerank 进同一份 Context
-    3. persona_manager        人格（GCP 与 SelfLearning 都读它）
+    3. persona_manager        人格
     4. 插件挂载                 见 plugins_mount.loader.MOUNT_ORDER
-    5. 委托对齐                 打开 SelfLearning 的 delegate_memory_to_livingmemory
-    6. initialize()           按挂载顺序调，LivingMemory 在这一步建 FAISS 索引
-
-第 5 步必须在第 4 步之后、第 6 步之前：委托开关要在 SelfLearning 的
-initialize() 读它之前写进 config，否则那一轮读到的还是默认值 false。
-
-## 关闭
-
-逆序 terminate()。逆序是因为 SelfLearning 可能正在往 LivingMemory 的图谱里写，
-先关 LivingMemory 会让那些写操作打到已关闭的 SQLite 连接上。
+    5. initialize()           按挂载顺序调，LivingMemory 在这一步建 FAISS 索引
 """
 
 from __future__ import annotations
@@ -45,13 +36,6 @@ from hermes_layer.dispatch import (
 )
 from hermes_layer.gateway_client import GatewayClient, build_from_config
 from plugins_mount.loader import MountSpec, PluginMount, mount_all
-
-#: SelfLearning 里存放功能融合开关的配置分组（_conf_schema.json 的真实位置）。
-DELEGATION_GROUP = "Integration_Settings"
-
-#: 两个都要为 true 才会真委托 —— 见 core/feature_delegation.py:68-73，
-#: 它对两个开关做的是"任一为 false 就不委托"。只开第一个，本地记忆照旧写。
-DELEGATION_KEYS = ("delegate_memory_to_livingmemory", "disable_local_memory_when_delegated")
 
 
 @dataclass
@@ -105,15 +89,13 @@ class UnifiedContext:
         self._install_persona()
         await dispatch_lifecycle_event(EventType.OnPlatformLoadedEvent, {"platform": "aiocqhttp"})
         self._mount_plugins()
-        self._align_delegation()
         await self._initialize_plugins()
         self.ready = all(h.status in ("healthy", "absent") for h in self.health.values())
         await dispatch_lifecycle_event(EventType.OnAstrBotLoadedEvent, {"plugins": list(self.mounts.keys())})
         scan_and_warn_unsupported_handlers()
         logger.info(
-            "统一宿主装配完成 | 插件 %d 个 | 委托=%s | ready=%s",
+            "统一宿主装配完成 | 插件 %d 个 | ready=%s",
             len(self.mounts),
-            self.delegation_active,
             self.ready,
         )
 
@@ -219,38 +201,6 @@ class UnifiedContext:
                 enabled=raw.get("enabled", True) is not False,
             )
         return out
-
-    def _align_delegation(self) -> None:
-        """把"记忆委托给 LivingMemory"这件事在配置层面落实。
-
-        `FeatureDelegation.should_delegate_memory()` 要求三件事同时成立：两个
-        开关都为 true，且 `_find_active_star(LIVING_MEMORY_ALIASES)` 能在
-        star_registry 里找到激活的 LivingMemory。第三件由挂载顺序保证。
-
-        开关的真实位置是 `Integration_Settings` 分组（config.py:493 从那里读，
-        不读顶层），schema 默认已是 true —— 所以这个方法的价值不在"打开"，
-        而在 **LivingMemory 缺席时把它关掉**：不关的话，SelfLearning 会走进
-        `_probe_remote_star()`，对 127.0.0.1:8878 发一次 0.5s 超时的 HTTP 探测。
-        统一宿主里那个端口已经没人监听了，于是每次都是一次白等。
-        """
-        sl = self.mounts.get("self_learning")
-        if sl is None:
-            return
-
-        found = self.context.get_registered_star("LivingMemory")
-        active = found is not None and found.star_cls is not None
-        group = sl.config.setdefault(DELEGATION_GROUP, {})
-        for flag in DELEGATION_KEYS:
-            group[flag] = active
-            # 顶层也写一份：config.py:_read_config_value 先看顶层再看分组，
-            # 两处一致才不会出现"读哪份得到不同答案"。
-            sl.config[flag] = active
-
-        self.delegation_active = active
-        if not active:
-            logger.warning(
-                "[功能融合] 未找到已激活的 LivingMemory，SelfLearning 保持本地记忆模式"
-            )
 
     async def _initialize_plugins(self) -> None:
         """按挂载顺序调 initialize()，并等 LivingMemory 真正就绪。"""

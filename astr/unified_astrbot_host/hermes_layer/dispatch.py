@@ -50,21 +50,21 @@ DISPATCH_TABLE: dict[EventType, EventDispatchSpec] = {
         event_type=EventType.AdapterMessageEvent,
         source="message.received",
         level=SupportLevel.SUPPORTED,
-        default_targets=("living_memory", "self_learning", "group_chat_plus"),
+        default_targets=("living_memory", "group_chat_plus"),
         description="收到的群聊/私聊消息事件",
     ),
     EventType.OnWaitingLLMRequestEvent: EventDispatchSpec(
         event_type=EventType.OnWaitingLLMRequestEvent,
         source="/api/v1/context/enrich (pre-enrich)",
         level=SupportLevel.SUPPORTED,
-        default_targets=("living_memory", "self_learning", "group_chat_plus"),
+        default_targets=("living_memory", "group_chat_plus"),
         description="LLM 请求准备阶段（在上下文组装前触发）",
     ),
     EventType.OnLLMRequestEvent: EventDispatchSpec(
         event_type=EventType.OnLLMRequestEvent,
         source="/api/v1/context/enrich (stages)",
         level=SupportLevel.SUPPORTED,
-        default_targets=("living_memory", "self_learning", "group_chat_plus"),
+        default_targets=("living_memory", "group_chat_plus"),
         description="LLM 请求阶段，用于注入提示词与上下文块",
     ),
     EventType.OnLLMResponseEvent: EventDispatchSpec(
@@ -78,35 +78,35 @@ DISPATCH_TABLE: dict[EventType, EventDispatchSpec] = {
         event_type=EventType.OnDecoratingResultEvent,
         source="/api/v1/result/decorate (capability: result.decorate)",
         level=SupportLevel.CAPABILITY,
-        default_targets=("group_chat_plus", "living_memory", "self_learning"),
+        default_targets=("group_chat_plus", "living_memory"),
         description="回复修饰能力，用于在发送前过滤/变换文本与表情",
     ),
     EventType.OnCallingFuncToolEvent: EventDispatchSpec(
         event_type=EventType.OnCallingFuncToolEvent,
         source="/api/v1/tools/call (pre)",
         level=SupportLevel.SUPPORTED,
-        default_targets=("living_memory", "self_learning", "group_chat_plus"),
+        default_targets=("living_memory", "group_chat_plus"),
         description="函数工具调用前置钩子",
     ),
     EventType.OnUsingLLMToolEvent: EventDispatchSpec(
         event_type=EventType.OnUsingLLMToolEvent,
         source="/api/v1/tools/call (invoking)",
         level=SupportLevel.SUPPORTED,
-        default_targets=("living_memory", "self_learning", "group_chat_plus"),
+        default_targets=("living_memory", "group_chat_plus"),
         description="LLM 工具使用中钩子",
     ),
     EventType.OnLLMToolRespondEvent: EventDispatchSpec(
         event_type=EventType.OnLLMToolRespondEvent,
         source="/api/v1/tools/call (post)",
         level=SupportLevel.SUPPORTED,
-        default_targets=("living_memory", "self_learning", "group_chat_plus"),
+        default_targets=("living_memory", "group_chat_plus"),
         description="LLM 工具响应后置钩子",
     ),
     EventType.OnAfterMessageSentEvent: EventDispatchSpec(
         event_type=EventType.OnAfterMessageSentEvent,
         source="message.sent",
         level=SupportLevel.SUPPORTED,
-        default_targets=("group_chat_plus", "living_memory", "self_learning"),
+        default_targets=("group_chat_plus", "living_memory"),
         description="消息已实际投递事件",
     ),
     EventType.OnAstrBotLoadedEvent: EventDispatchSpec(
@@ -163,7 +163,6 @@ DISPATCH_TABLE: dict[EventType, EventDispatchSpec] = {
 #: 兜底模块前缀映射（当 mounts 实例不可用时）
 _FALLBACK_MODULE_PREFIX = {
     "living_memory": "astrbot_plugin_livingmemory",
-    "self_learning": "astrbot_plugin_self_learning",
     "group_chat_plus": "astrbot_plugin_group_chat_plus",
 }
 

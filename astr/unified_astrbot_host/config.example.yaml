@@ -60,24 +60,6 @@ plugins:
       agent_tools:
         enable_recall_tool: true
         enable_memorize_tool: true
-  self_learning:
-    package: astrbot_plugin_self_learning
-    path: ../astrbot_plugin_self_learning
-    enabled: true
-    config:
-      Storage_Settings:
-        data_dir: ./data/plugin_data/astrbot_plugin_self_learning
-      Self_Learning_Basic:
-        enable_web_interface: true
-      Integration_Settings:
-        delegate_memory_to_livingmemory: true
-        disable_local_memory_when_delegated: true
-        livingmemory_plugin_name: LivingMemory
-      MaiBot_Enhancement:
-        enable_knowledge_graph: true
-        enable_memory_graph: true
-      Database_Settings:
-        db_type: sqlite
   group_chat_plus:
     package: astrbot_plugin_group_chat_plus
     path: ../astrbot_plugin_group_chat_plus

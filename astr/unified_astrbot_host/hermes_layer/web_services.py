@@ -1,8 +1,7 @@
-"""hermes_layer.web_services —— 在统一宿主启动时，顺带拉起三个插件的原生 Web 面板。
+"""hermes_layer.web_services —— 在统一宿主启动时，顺带拉起插件的原生 Web 面板。
 
 端口映射：
   * :1451 —— Group Chat Plus 管理面板 (aiohttp)
-  * :7833 —— Self Learning 监控仪表盘 (Quart / Hypercorn)
   * :8878 —— LivingMemory 记忆与知识图谱仪表盘 (FastAPI / Uvicorn + QuartBridge)
 """
 

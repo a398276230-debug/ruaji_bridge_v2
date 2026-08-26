@@ -62,7 +62,6 @@ SERIAL_STAGE = ("group_chat_plus",)
 #: 插件短名 → 它的模块前缀。用来把 handler 归属到插件。
 MODULE_PREFIX = {
     "living_memory": "astrbot_plugin_livingmemory",
-    "self_learning": "astrbot_plugin_self_learning",
     "group_chat_plus": "astrbot_plugin_group_chat_plus",
 }
 

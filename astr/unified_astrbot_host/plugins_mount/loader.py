@@ -1,18 +1,11 @@
-"""plugins_mount.loader —— 把三个 AstrBot 插件装进同一个进程。
+"""plugins_mount.loader —— 把 AstrBot 插件装进同一个进程。
 
-## 为什么顺序不能乱
+## 挂载顺序说明
 
-    LivingMemory  →  SelfLearning  →  GroupChatPlus
+    LivingMemory  →  GroupChatPlus
 
-1. **LivingMemory 必须最先注册。** SelfLearning 在 `initialize()` 里调
-   `FeatureDelegation.memory_plugin()`，那个函数走
-   `context.get_registered_star("LivingMemory")`。如果 LivingMemory 还没进
-   star_registry，委托检测就返回 None，SelfLearning 会退回本地长期记忆 ——
-   于是同一批事实在两个库里各写一份，而且两份会随时间漂移。
-   这个失败是**静默**的：日志里只是少了一行 `[功能融合]`。
-2. **GroupChatPlus 最后。** 它的 on_llm_request 钩子要在别人都注入完之后
-   才做"差分保留第三方提示词"（main.py 的通用保留机制），顺序靠
-   star_handlers_registry 的登记次序，也就是 import 次序。
+1. **LivingMemory 优先注册**：记忆与图谱基础设施先就绪。
+2. **GroupChatPlus 最后**：它的 on_llm_request 钩子要在别人注入完之后才做差分保留第三方提示词。
 
 ## 与真 AstrBot 的一处刻意差异
 
@@ -42,7 +35,7 @@ from astrbot.core.star.star import Star, StarMetadata, star_map, star_registry
 from astrbot.core.star.star_handler import star_handlers_registry
 
 #: 挂载顺序。改动前先读本模块顶部的说明。
-MOUNT_ORDER = ("living_memory", "self_learning", "group_chat_plus")
+MOUNT_ORDER = ("living_memory", "group_chat_plus")
 
 
 @dataclass
