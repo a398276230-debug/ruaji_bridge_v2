@@ -248,11 +248,11 @@ class HostServer:
 
         # 默认只派发给 living_memory 等支持的目标插件
         spec = DISPATCH_TABLE.get(EventType.OnLLMResponseEvent)
-        allowed_targets = spec.default_targets if spec else ("living_memory",)
+        allowed_targets = spec.default_targets if spec else ("all",)
 
         for h in handlers:
             key = resolve_owner(h, self.unified.mounts)
-            if allowed_targets and key not in allowed_targets:
+            if allowed_targets and "all" not in allowed_targets and key not in allowed_targets:
                 continue
             entry: dict[str, Any] = {"plugin": key, "handler": getattr(h, "handler_name", "unknown")}
             started = time.perf_counter()
