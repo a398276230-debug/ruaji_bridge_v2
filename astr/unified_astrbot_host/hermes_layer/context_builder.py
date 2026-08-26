@@ -94,9 +94,10 @@ def build_event(message: InboundMessage, self_id: str = "") -> AstrMessageEvent:
     msg.sender.user_id = message.user_id
     msg.sender.nickname = message.user_name
 
+    effective_self_id = message.self_id or self_id or msg.self_id
     chain: list[Any] = []
-    if message.at_bot and msg.self_id:
-        chain.append(At(qq=msg.self_id, name=""))
+    if message.at_bot:
+        chain.append(At(qq=effective_self_id, name=""))
     if message.text:
         chain.append(Plain(text=message.text))
     msg.message = chain
@@ -178,7 +179,7 @@ def _diff(baseline: ProviderRequest, after: ProviderRequest, source: str, elapse
         rendered = "\n".join(
             str(getattr(part, "text", "") or getattr(part, "content", "")) for part in extra_parts
         )
-        slot = "slang" if source == "self_learning" else "extra"
+        slot = "extra"
         blocks.append(
             ContextBlock(
                 source=source,
@@ -194,11 +195,17 @@ def _diff(baseline: ProviderRequest, after: ProviderRequest, source: str, elapse
 
 
 class ContextBuilder:
-    """把三个插件的上下文注入收集成 ContextBlock 数组。"""
+    """收集上下文 ContextBlock 数组——委托给已注册的适配器。
+
+    适配器按 ``execution_order`` 分组：同一 order 并发执行，不同 order 串行。
+    高 order 的适配器（如 GCP）可以看到低 order（如 LivingMemory）的产出。
+    """
 
     def __init__(self, unified: Any, timeout_ms: int = 2500) -> None:
         self._unified = unified
         self.timeout_s = max(0.2, timeout_ms / 1000.0)
+        # 缓存超时供 adapters 读取
+        unified._context_timeout_s = self.timeout_s
 
     # ------------------------------------------------------------------
 
@@ -224,27 +231,47 @@ class ContextBuilder:
             except Exception as exc:
                 logger.warning("OnWaitingLLMRequestEvent handler 执行异常: %s", exc)
 
+        # 面向适配器的分组执行
+        adapters = getattr(self._unified, "adapters", None) or []
         blocks: list[ContextBlock] = []
-        stage_a = await asyncio.gather(
-            *(self._run_plugin(key, message, history, self_id, base_blocks=None) for key in self._present(CONCURRENT_STAGE))
-        )
-        for produced in stage_a:
-            blocks.extend(produced)
 
-        for key in self._present(SERIAL_STAGE):
-            blocks.extend(await self._run_plugin(key, message, history, self_id, base_blocks=blocks))
+        if adapters:
+            # 按 execution_order 分组
+            from itertools import groupby
+            sorted_adapters = sorted(adapters, key=lambda a: a.execution_order)
+            for _order, group in groupby(sorted_adapters, key=lambda a: a.execution_order):
+                group_list = list(group)
+                if len(group_list) == 1:
+                    adapter = group_list[0]
+                    if adapter.plugin_key not in self._unified.mounts:
+                        continue
+                    if hasattr(adapter, 'provide_context'):
+                        import inspect
+                        sig = inspect.signature(adapter.provide_context)
+                        if 'prior_blocks' in sig.parameters:
+                            produced = await adapter.provide_context(message, history, prior_blocks=blocks)
+                        else:
+                            produced = await adapter.provide_context(message, history)
+                        blocks.extend(produced)
+                else:
+                    # 同 order 并发
+                    present = [a for a in group_list if a.plugin_key in self._unified.mounts]
+                    results = await asyncio.gather(
+                        *(a.provide_context(message, history) for a in present)
+                    )
+                    for produced in results:
+                        blocks.extend(produced)
+        else:
+            # 向后兼容：无适配器时走旧路径
+            stage_a = await asyncio.gather(
+                *(self._run_plugin(key, message, history, self_id, base_blocks=None) for key in self._present(CONCURRENT_STAGE))
+            )
+            for produced in stage_a:
+                blocks.extend(produced)
+            for key in self._present(SERIAL_STAGE):
+                blocks.extend(await self._run_plugin(key, message, history, self_id, base_blocks=blocks))
 
         merged = "\n\n".join(b.content for b in blocks if b.kind == "system_prompt" and b.content)
-        # `contextText` 才是给 Bridge v2 注入用的那一份 —— 全部三种 kind 都算。
-        #
-        # 不能用 `systemPrompt`：LivingMemory 召回的记忆走的是
-        # `extra_user_content_parts`（kind=extra_parts），SelfLearning 的画像走
-        # system_prompt，GCP 的群聊上下文可能落在 contexts。只取 system_prompt
-        # 的话，Bridge 那边拿到的是一个"看起来成功了、但记忆恰好全丢了"的响应 ——
-        # 而且冷启动时两者都是空串，所以本地测不出来，只有线上召回到东西才暴露。
-        #
-        # `systemPrompt` 保留原义（严格只有系统提示词那一段），它是阶段 B 给 GCP
-        # 铺底的那个值，也是排查"谁改写了系统提示词"时要看的东西。
         context_text = "\n\n".join(b.content for b in blocks if b.content)
         return {
             "sessionId": message.session_id,

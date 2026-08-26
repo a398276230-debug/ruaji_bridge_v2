@@ -56,7 +56,25 @@ class ToolRegistry:
 
     def __init__(self, unified: Any) -> None:
         self._unified = unified
-        self._tools: dict[str, HermesTool] = {t.name: t for t in self._build()}
+        self._tools: dict[str, HermesTool] = {}
+        self._rebuild()
+
+    def _rebuild(self) -> None:
+        """重建工具清单：优先从适配器收集，余下走旧 _build() 兜底。"""
+        tools: dict[str, HermesTool] = {}
+        adapters = getattr(self._unified, "adapters", None) or []
+        adapter_contributed = False
+        for adapter in adapters:
+            if adapter.plugin_key not in self._unified.mounts:
+                continue
+            for t in adapter.export_tools():
+                tools[t.name] = t
+                adapter_contributed = True
+        if not adapter_contributed:
+            # 向后兼容：无适配器贡献时走旧路径
+            for t in self._build():
+                tools[t.name] = t
+        self._tools = tools
 
     # ------------------------------------------------------------------
     # 对外

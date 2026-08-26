@@ -22,7 +22,11 @@ DEFAULT_TIMEOUT_MS = 15000
 
 
 class DecisionEngine:
-    """纯中转裁决引擎：完全委托 GCP 原生逻辑。"""
+    """裁决引擎——委托给已注册适配器的 decide_reply()。
+
+    遍历适配器列表（按 decision_priority），取第一个返回非 None 的结果。
+    向后兼容：若无适配器，退化为直接调用 GCP 原生方法。
+    """
 
     def __init__(self, unified: Any, timeout_ms: int | None = None) -> None:
         self._unified = unified
@@ -35,6 +39,52 @@ class DecisionEngine:
         history: list[dict] | None = None,
     ) -> Decision:
         started = time.perf_counter()
+
+        def elapsed() -> float:
+            return round((time.perf_counter() - started) * 1000, 2)
+
+        adapters = getattr(self._unified, "adapters", None) or []
+        # 按 decision_priority 排序，取有 decide_reply 方法的适配器
+        decision_adapters = sorted(
+            [a for a in adapters if hasattr(a, "decide_reply")],
+            key=lambda a: getattr(a, "decision_priority", 100),
+        )
+
+        if decision_adapters:
+            for adapter in decision_adapters:
+                if adapter.plugin_key not in self._unified.mounts:
+                    continue
+                try:
+                    result = await adapter.decide_reply(message, history)
+                except Exception as exc:
+                    logger.exception("适配器 %s 裁决异常", adapter.plugin_key)
+                    result = Decision(
+                        verdict="ignore",
+                        reason=f"{adapter.plugin_key} 裁决异常: {type(exc).__name__}: {exc}",
+                        elapsed_ms=elapsed(),
+                        detail={"degraded": True, "error": str(exc)},
+                    )
+                if result is not None:
+                    return result
+
+            # 所有适配器都返回 None = 不参与裁决
+            verdict = "direct" if message.at_bot else "ignore"
+            return Decision(
+                verdict=verdict,
+                reason="无适配器参与裁决，降级处理",
+                elapsed_ms=elapsed(),
+            )
+
+        # 向后兼容：无适配器时走旧 GCP 直调路径
+        return await self._legacy_decide(message, history, started)
+
+    async def _legacy_decide(
+        self,
+        message: InboundMessage,
+        history: list[dict] | None,
+        started: float,
+    ) -> Decision:
+        """向后兼容路径：直接调 GCP 原生方法（未启用适配器时）。"""
 
         def elapsed() -> float:
             return round((time.perf_counter() - started) * 1000, 2)

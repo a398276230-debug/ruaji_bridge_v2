@@ -35,6 +35,7 @@ from hermes_layer.dispatch import (
     scan_and_warn_unsupported_handlers,
 )
 from hermes_layer.gateway_client import GatewayClient, build_from_config
+from hermes_layer.plugin_contract import UnifiedPluginContract
 from plugins_mount.loader import MountSpec, PluginMount, mount_all
 
 
@@ -77,6 +78,7 @@ class UnifiedContext:
 
         self.mounts: dict[str, PluginMount] = {}
         self.health: dict[str, PluginHealth] = {}
+        self.adapters: list[UnifiedPluginContract] = []
         self.delegation_active = False
         self._closed = False
 
@@ -90,6 +92,7 @@ class UnifiedContext:
         await dispatch_lifecycle_event(EventType.OnPlatformLoadedEvent, {"platform": "aiocqhttp"})
         self._mount_plugins()
         await self._initialize_plugins()
+        await self._setup_adapters()
         self.ready = all(h.status in ("healthy", "absent") for h in self.health.values())
         await dispatch_lifecycle_event(EventType.OnAstrBotLoadedEvent, {"plugins": list(self.mounts.keys())})
         scan_and_warn_unsupported_handlers()
@@ -146,9 +149,8 @@ class UnifiedContext:
     def _install_persona(self) -> None:
         """装人格。
 
-        GCP 与 SelfLearning 都从 `context.persona_manager` 取当前人格；
-        SelfLearning 的人格审阅还会往回写 system_prompt。所以这个对象要可写，
-        且写入必须落盘 —— 否则宿主一重启，学到的语气就没了。
+        GCP 从 `context.persona_manager` 取当前人格；人格审阅会往回写
+        system_prompt。所以这个对象要可写，且写入必须落盘。
         """
         from runtime.persona import PersonaManager
 
@@ -239,6 +241,28 @@ class UnifiedContext:
         health.detail["note"] = f"异步初始化超过 {timeout_s:.0f}s 仍未完成"
         logger.warning("插件 %s 在 %.0fs 内未完成异步初始化", mount.name, timeout_s)
 
+    async def _setup_adapters(self) -> None:
+        """根据已挂载的插件，实例化并初始化对应的适配器。"""
+        from hermes_layer.adapters import LivingMemoryAdapter, GroupChatPlusAdapter
+
+        _adapter_map: dict[str, type[UnifiedPluginContract]] = {
+            "living_memory": LivingMemoryAdapter,
+            "group_chat_plus": GroupChatPlusAdapter,
+        }
+        adapters: list[UnifiedPluginContract] = []
+        for key, adapter_cls in _adapter_map.items():
+            if key not in self.mounts:
+                continue
+            adapter = adapter_cls(self)
+            try:
+                config = (self.config.get("plugins") or {}).get(key, {})
+                await adapter.initialize(self.context, config)
+                adapters.append(adapter)
+                logger.info("适配器 %s (%s) 就绪", adapter.plugin_key, type(adapter).__name__)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("适配器 %s 初始化失败: %s", key, exc)
+        self.adapters = sorted(adapters, key=lambda a: a.execution_order)
+
     # ------------------------------------------------------------------
     # 查询
     # ------------------------------------------------------------------
@@ -317,6 +341,13 @@ class UnifiedContext:
             return
         self._closed = True
         self.ready = False
+        # 先逆序终止适配器
+        for adapter in reversed(self.adapters):
+            try:
+                await adapter.terminate()
+            except Exception:  # noqa: BLE001
+                logger.exception("适配器 %s terminate() 失败", adapter.plugin_key)
+        # 再逆序终止原生插件
         for key in reversed(list(self.mounts)):
             mount = self.mounts[key]
             await dispatch_lifecycle_event(EventType.OnPluginUnloadedEvent, {"plugin": key})
@@ -333,4 +364,4 @@ class UnifiedContext:
         logger.info("统一宿主已关闭")
 
 
-__all__ = ["DELEGATION_GROUP", "DELEGATION_KEYS", "PluginHealth", "UnifiedContext"]
+__all__ = ["DELEGATION_GROUP", "DELEGATION_KEYS", "PluginHealth", "UnifiedContext", "UnifiedPluginContract"]

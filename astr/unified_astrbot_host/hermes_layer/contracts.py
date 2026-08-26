@@ -59,6 +59,13 @@ class InboundMessage:
                     return str(value)
             return ""
 
+        def sbool(*keys: str) -> bool:
+            for key in keys:
+                value = payload.get(key)
+                if value is not None:
+                    return bool(value)
+            return False
+
         text = payload.get("text")
         if text is None:
             text = payload.get("message") or payload.get("raw_message") or ""
@@ -70,17 +77,19 @@ class InboundMessage:
             user_name=str(
                 payload.get("userName")
                 or payload.get("user_name")
+                or payload.get("displayName")
+                or payload.get("display_name")
                 or payload.get("nickname")
                 or ""
             ),
             text=str(text),
             self_id=sid("selfId", "self_id", "robotId", "robot_id"),
-            is_private=bool(payload.get("isPrivate", payload.get("is_private", False))),
-            at_bot=bool(payload.get("atBot", payload.get("at_bot", False))),
+            is_private=sbool("isPrivate", "is_private", "private"),
+            at_bot=sbool("isAtBot", "is_at_bot", "atBot", "at_bot"),
             reply_to=sid("replyTo", "reply_to"),
             role=str(payload.get("role") or "member"),
             timestamp=float(payload.get("timestamp") or time.time()),
-            raw=dict(payload.get("raw") or {}),
+            raw=dict(payload.get("raw") or payload.get("rawMessage") or payload.get("raw_message") or {} if isinstance(payload.get("raw") or payload.get("rawMessage") or payload.get("raw_message"), dict) else {}),
         )
 
     @property
