@@ -73,8 +73,8 @@ from hermes_layer.web_services import PluginWebManager
 from runtime.config import DEFAULT_CONFIG_PATH, load_config
 from runtime.context import UnifiedContext
 
-#: `/api/v1/events` 默认分发给谁
-DEFAULT_EVENT_TARGETS = ("living_memory", "group_chat_plus")
+#: `/api/v1/events` 默认分发给谁（仅记忆插件，GCP 由 /api/v1/decision 统一负责裁决与滑窗缓存）
+DEFAULT_EVENT_TARGETS = ("living_memory",)
 
 #: 单个插件摄取一条消息的预算
 EVENT_TIMEOUT_S = 20.0

@@ -148,6 +148,29 @@ class GroupChatPlusAdapter(UnifiedPluginContract):
             is_at_message = message.at_bot
 
         # 3. 概率筛选
+        def _cache_ignored_message(source: str = "probability_filter") -> None:
+            try:
+                cm = getattr(plugin, "cache_manager", None)
+                if cm and hasattr(cm, "add_to_cache") and message.text:
+                    cm.add_to_cache(
+                        chat_id,
+                        {
+                            "role": "user",
+                            "content": message.text,
+                            "timestamp": time.time(),
+                            "message_id": message.message_id,
+                            "sender_id": message.user_id,
+                            "sender_name": message.user_name,
+                            "message_timestamp": int(message.timestamp),
+                            "is_at_message": is_at_message,
+                            "has_trigger_keyword": has_trigger_keyword,
+                            "probability_filtered": True,
+                        },
+                        source=source,
+                    )
+            except Exception as e:
+                logger.debug("GCP 未回复消息缓存跳过: %s", e)
+
         skipped_prob = is_at_message or has_trigger_keyword
         if not skipped_prob:
             if hasattr(plugin, "_check_probability"):
@@ -155,6 +178,7 @@ class GroupChatPlusAdapter(UnifiedPluginContract):
                     platform_name, is_private, chat_id, event,
                 )
                 if not passed:
+                    _cache_ignored_message("probability_filter")
                     return Decision(
                         verdict="ignore",
                         reason="未通过 GCP 读空气概率筛选",
@@ -175,6 +199,7 @@ class GroupChatPlusAdapter(UnifiedPluginContract):
                 original_message_text=message.text,
             )
             if not should_reply:
+                _cache_ignored_message("decision_ai_no_reply")
                 return Decision(
                     verdict="ignore",
                     reason="GCP 决策 AI 判定本次不回复",

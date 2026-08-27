@@ -97,10 +97,13 @@ export function renderSystemText({ inbound, contextBlocks, triggerType, affectio
     ? `\n[当前会话: QQ群聊 (群号: ${inbound.groupId})]`
     : '\n[当前会话: QQ私聊]';
 
+  const knowledgeNotice =
+    '\n[知识与工具认知: 你的底层数据库存在时效延后，且并非全知全能。遇到不确定、具有时效性或涉及具体事实/机制的提问时，必须主动使用搜索工具与群聊记忆检索，以获取最新且准确的真实信息，切勿凭空编造。]';
+
   // 分支 1/2：主人，以及主动接话。
   // 主动接话本身不构成与任何群友的互动，不注入也不评估好感度。
   if (isOwner || isProactive) {
-    return `${slots.voice}${memePart}${slangPart}${extraPart}${triggerNotice}${sessionEnv}`;
+    return `${slots.voice}${memePart}${slangPart}${extraPart}${triggerNotice}${sessionEnv}${knowledgeNotice}`;
   }
 
   // 分支 3：普通群友/私聊对象
@@ -127,7 +130,7 @@ export function renderSystemText({ inbound, contextBlocks, triggerType, affectio
     }
   }
 
-  return `${header}${affLine}${memePart}${slangPart}${extraPart}${triggerNotice}${sessionEnv}`;
+  return `${header}${affLine}${memePart}${slangPart}${extraPart}${triggerNotice}${sessionEnv}${knowledgeNotice}`;
 }
 
 /**

@@ -74,6 +74,7 @@ class UnifiedContext:
 
         self.gateway: GatewayClient = build_from_config(config)
         self.context = Context(config=config, data_dir=data_root)
+        self.context.unified = self
         StarTools.initialize(self.context)
 
         self.mounts: dict[str, PluginMount] = {}

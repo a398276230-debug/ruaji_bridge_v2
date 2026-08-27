@@ -271,12 +271,16 @@ class _StarManager:
                 unified = self._unified
             if unified and hasattr(unified, "mounts"):
                 for m_key, mount in unified.mounts.items():
-                    if pkg in m_key or (mount.spec and (pkg in mount.spec.name or pkg in mount.spec.package)):
+                    spec = getattr(mount, "spec", None)
+                    m_name = getattr(mount, "name", "")
+                    s_key = getattr(spec, "key", "")
+                    s_pkg = getattr(spec, "package", "")
+                    if pkg in m_key or pkg in m_name or pkg in s_key or pkg in s_pkg:
                         inst = getattr(mount, "instance", None)
                         if inst and new_cfg:
                             _apply_config_to_instance(inst, new_cfg)
-                            if mount.spec and mount.spec.entry_module:
-                                bind_handlers(mount.spec.entry_module, inst)
+                            if spec and getattr(spec, "entry_module", None):
+                                bind_handlers(spec.entry_module, inst)
                             reloaded_count += 1
 
             # 清理 GCP 历史会话的临时概率状态覆盖，使新的 initial_probability 立即生效
@@ -396,8 +400,16 @@ class Context:
         # `provider:model` 形式：退回同名 provider，模型名交给调用方
         if ":" in key:
             head = key.split(":", 1)[0]
-            return self.providers.get(head) or self.providers.get(head.lower())
-        return None
+            found_head = self.providers.get(head) or self.providers.get(head.lower())
+            if found_head is not None:
+                return found_head
+        # 动态按模型名认领：插件填任意模型名，直接基于当前网关动态生成 Provider
+        if self._default_provider and hasattr(self._default_provider, "gateway"):
+            from ..provider.provider import GatewayChatProvider
+            dynamic_prov = GatewayChatProvider(self._default_provider.gateway, provider_id=key, model=key)
+            self.providers[key] = dynamic_prov
+            return dynamic_prov
+        return self._default_provider
 
     def get_provider(self, provider_id: str | None = None, *args: Any, **kwargs: Any) -> Provider | None:  # noqa: ARG002
         """旧垫片里 GCP 用的名字，保留以免改动插件源码。"""
