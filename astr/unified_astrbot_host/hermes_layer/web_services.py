@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 from pathlib import Path
@@ -141,20 +140,6 @@ window.AstrBotPluginPage = {
 
         @app.api_route("/api/plug/astrbot_plugin_livingmemory/{path:path}", methods=["GET", "POST"])
         async def page_api(path: str, request: Request):
-            # 处理 Hermes 专属配置保存 / 查询
-            if path.strip("/") in ("page/hermes/config", "hermes/config"):
-                from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
-                conf_file = Path(get_astrbot_plugin_data_path()) / "astrbot_plugin_livingmemory" / "config.json"
-                if request.method == "POST":
-                    incoming = await request.json()
-                    saved = json.loads(conf_file.read_text(encoding="utf-8-sig")) if conf_file.is_file() else {}
-                    saved.update(incoming)
-                    conf_file.write_text(json.dumps(saved, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-                    return {"ok": True, "data": saved, "restart_required": True}
-                else:
-                    saved = json.loads(conf_file.read_text(encoding="utf-8-sig")) if conf_file.is_file() else {}
-                    return {"ok": True, "data": saved, "restart_required": False}
-
             context = getattr(lm_inst, "context", None)
             if not context:
                 raise HTTPException(503, "LivingMemory is not ready")

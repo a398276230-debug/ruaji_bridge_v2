@@ -1940,15 +1940,3 @@ body {
   padding-top: var(--space-4);
   border-top: 1px solid var(--border-color);
 }
-.provider-config-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 12px;
-}
-.provider-config-grid label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  color: var(--text-secondary);
-  font-size: 12px;
-}

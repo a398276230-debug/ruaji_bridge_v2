@@ -1114,46 +1114,103 @@ async function renderHost() {
     </div>
   `;
 
-  // 2. 供应商池列表
-  const provTbody = $('#providers-table tbody');
+  // 2. 全局默认模型卡片回显与保存交互
   const provList = providersData.providers ?? [];
+  const defaultModel = overview.host?.defaultModel ?? '';
+  const defaultModelInput = $('#host-default-model-input');
+  // 本页参与 5s 自动刷新（scheduleAutoRefresh 只豁免 sandbox/settings/plugins-portal），
+  // 无条件回写会把用户正在敲的模型名冲掉，所以聚焦时跳过。
+  if (defaultModelInput && document.activeElement !== defaultModelInput) {
+    defaultModelInput.value = defaultModel;
+  }
+  // 候选模型来自宿主已注册的聊天 Provider，不在前端硬编码第二份清单
+  const modelDatalist = $('#preset-host-default-models');
+  if (modelDatalist && providersData.availableModels?.length) {
+    modelDatalist.innerHTML = providersData.availableModels
+      .map((m) => `<option value="${esc(m)}"></option>`).join('');
+  }
+  const saveDefaultModelBtn = $('#host-save-default-model-btn');
+  if (saveDefaultModelBtn) {
+    saveDefaultModelBtn.onclick = async () => {
+      const newModel = (defaultModelInput?.value || '').trim();
+      if (!newModel) {
+        toast('默认模型名称不能为空', true);
+        return;
+      }
+      saveDefaultModelBtn.disabled = true;
+      toast(`正在将全局默认模型切换为 ${newModel}…`);
+      try {
+        const resp = await api('/api/host/providers/update', {
+          method: 'POST',
+          body: { id: 'llm', model: newModel },
+        });
+        toast(`全局默认模型已成功更新并落盘: ${resp.model || newModel}`);
+        await renderHost();
+      } catch (err) {
+        toast(`更新失败: ${err.message}`, true);
+      } finally {
+        saveDefaultModelBtn.disabled = false;
+      }
+    };
+  }
+
+  // 3. 供应商池列表
+  const provTbody = $('#providers-table tbody');
   provTbody.innerHTML = provList.map((p) => `
     <tr>
       <td><code>${esc(p.id)}</code></td>
       <td><span class="pill ok">${esc(p.type)}</span></td>
       <td><code>${esc(p.baseUrl)}</code></td>
+      <td><code>${esc(p.model || '-')}</code></td>
       <td><code>${esc(p.apiKeyMasked)}</code></td>
       <td>
-        <button class="btn btn-sm ghost" data-provider-id="${esc(p.id)}" data-base-url="${esc(p.baseUrl)}">
+        <button class="btn btn-sm ghost" data-provider-id="${esc(p.id)}" data-base-url="${esc(p.baseUrl)}" data-model="${esc(p.model || '')}">
           编辑接口
         </button>
       </td>
     </tr>
-  `).join('') || '<tr><td colspan="5" class="empty">无接口通道配置</td></tr>';
+  `).join('') || (providersData.ok
+    ? '<tr><td colspan="6" class="empty">无接口通道配置</td></tr>'
+    // 本页每 5s 自动刷新一次，失败提示必须是内联的——用 toast 会一直弹
+    : `<tr><td colspan="6" class="empty err">接口供应商池读取失败：${esc(providersData.error ?? '未知错误')}</td></tr>`);
 
   $$('#providers-table button').forEach((btn) => {
     btn.onclick = async () => {
       const pid = btn.dataset.providerId;
       const currentUrl = btn.dataset.baseUrl;
+      const currentModel = btn.dataset.model;
       const newUrl = prompt(`修改通道 [${pid}] 的 Base URL:`, currentUrl);
       if (newUrl === null) return;
+      let newModel = null;
+      if (pid === 'llm' || currentModel) {
+        newModel = prompt(`修改通道 [${pid}] 的模型名称 (留空保持不变):`, currentModel);
+        if (newModel === null) return;
+      }
       const newKey = prompt(`输入新 API Key (留空表示不修改):`, '');
       if (newKey === null) return;
 
+      if (pid === 'embedding' && newModel && newModel.trim() && newModel.trim() !== currentModel) {
+        // 换向量模型必然改变向量空间，旧 FAISS 索引不会跟着变，检索会静默地错
+        if (!confirm(`即将把 embedding 模型从 [${currentModel || '未设置'}] 换成 [${newModel.trim()}]。
+
+现有 FAISS 索引是旧模型建立的，不重建索引的话检索结果不可信。确认继续？`)) return;
+      }
+
       toast(`正在更新接口通道 ${pid}…`);
       const body = { id: pid, baseUrl: newUrl.trim() };
+      if (newModel && newModel.trim()) body.model = newModel.trim();
       if (newKey.trim()) body.apiKey = newKey.trim();
-      const resp = await api('/api/host/providers/update', { method: 'POST', body }).catch((e) => ({ ok: false, error: e.message }));
-      if (resp.ok) {
-        toast(`通道 ${pid} 接口配置已成功保存！`);
-        renderHost();
-      } else {
-        toast(`保存失败: ${resp.error}`, true);
+      try {
+        const resp = await api('/api/host/providers/update', { method: 'POST', body });
+        toast(resp.warning || `通道 ${pid} 接口配置已成功保存！`, Boolean(resp.warning));
+        await renderHost();
+      } catch (err) {
+        toast(`保存失败: ${err.message}`, true);
       }
     };
   });
 
-  // 3. 存储分布
+  // 4. 存储分布
   const storageTbody = $('#host-storage-table tbody');
   const storage = overview.storage ?? {};
   storageTbody.innerHTML = Object.entries(storage).map(([pkg, info]) => `

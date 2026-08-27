@@ -322,6 +322,7 @@ details[open] > summary { color: var(--text); }
 
 /* ---------- 杂项 ---------- */
 .empty { color: var(--text-faint); font-size: 13px; text-align: center; padding: 34px 12px; }
+.empty.err { color: var(--crit); }
 .toast {
   position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%) translateY(80px);
   background: var(--bg-elev-2); border: 1px solid var(--accent); color: var(--text);

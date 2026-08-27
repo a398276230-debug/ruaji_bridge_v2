@@ -68,6 +68,7 @@ from hermes_layer.dispatch import (
     resolve_owner,
     run_handlers,
 )
+from hermes_layer.gateway_client import EndpointConfig
 from hermes_layer.tool_registry import ToolRegistry
 from hermes_layer.web_services import PluginWebManager
 from runtime.config import DEFAULT_CONFIG_PATH, load_config
@@ -75,6 +76,11 @@ from runtime.context import UnifiedContext
 
 #: `/api/v1/events` 默认分发给谁（仅记忆插件，GCP 由 /api/v1/decision 统一负责裁决与滑窗缓存）
 DEFAULT_EVENT_TARGETS = ("living_memory",)
+
+#: gateway 上可热更新的出站端点。属性名与 providers 通道 id 一一对应。
+#: 必须是白名单：channel_id 来自请求体，裸 getattr 会摸到 gateway.client
+#: （httpx.AsyncClient，同样有 base_url）这类内部对象。
+GATEWAY_ENDPOINTS = ("llm", "embedding", "rerank")
 
 #: 单个插件摄取一条消息的预算
 EVENT_TIMEOUT_S = 20.0
@@ -517,6 +523,19 @@ class HostServer:
 
         return _json({"ok": True, "pages": pages})
 
+    def _default_llm_model(self) -> str:
+        """当前生效的全局默认 LLM 模型。
+
+        以运行时 gateway 为准而不是配置文件：模型可以被 /providers/update 热切换，
+        这时 config.yaml 已经写回但进程内的 EndpointConfig 才是实际发出去的那个。
+        """
+        endpoint = getattr(getattr(self.unified, "gateway", None), "llm", None)
+        providers = self.unified.config.get("providers") or {}
+        return str(
+            getattr(endpoint, "model", "")
+            or (providers.get("llm") or {}).get("model", "")
+        )
+
     async def handle_overview(self, request: web.Request) -> web.Response:  # noqa: ARG002
         """返回统一宿主全局总览信息"""
         data_dir = Path(self.unified.data_root)
@@ -544,6 +563,7 @@ class HostServer:
                 "status": health.get("status", "healthy"),
                 "shadowMode": bool((self.unified.config.get("host") or {}).get("shadow_mode", True)),
                 "port": self.port,
+                "defaultModel": self._default_llm_model(),
             },
             "plugins": {
                 "mounted": len(self.unified.mounts),
@@ -565,31 +585,43 @@ class HostServer:
                     "id": pid,
                     "type": pcfg.get("type") or ("chat_completion" if pid == "llm" else pid),
                     "baseUrl": pcfg.get("base_url", "-"),
+                    "model": pcfg.get("model", ""),
                     "apiKeyEnv": pcfg.get("api_key_env", ""),
                     "apiKeyMasked": masked_key,
                     "hasKey": bool(raw_key),
                     "timeoutS": pcfg.get("timeout_s", 60),
                     "active": True,
                 })
+
+        # 可选模型清单由已注册的聊天 Provider 推出，避免前端再硬编码一份
+        available_models: list[str] = []
+        for prov in self.unified.context.get_all_providers():
+            name = str(getattr(prov, "model_name", "") or "")
+            if name and name not in available_models:
+                available_models.append(name)
+
         return _json({
             "ok": True,
             "total": len(providers_list),
             "providers": providers_list,
+            "availableModels": available_models,
             "defaults": {
                 "chat": self.unified.config.get("default_provider", "llm"),
+                "defaultModel": self._default_llm_model(),
                 "embedding": (self.unified.config.get("livingmemory") or {}).get("embedding_provider", "embedding"),
                 "rerank": (self.unified.config.get("livingmemory") or {}).get("rerank_provider", "rerank"),
             }
         })
 
     async def handle_providers_update(self, request: web.Request) -> web.Response:
-        """在线更新指定供应商接口通道的 Base URL 或 Key"""
+        """在线更新指定供应商接口通道的 Base URL、Model 或 Key"""
         body = await _read_json(request)
         channel_id = str(body.get("id") or "").strip()
         if not channel_id:
             raise web.HTTPBadRequest(text=json.dumps({"ok": False, "error": "missing_id"}, ensure_ascii=False))
 
         new_base_url = str(body.get("baseUrl") or "").strip()
+        new_model = str(body.get("model") or "").strip()
         new_api_key = str(body.get("apiKey") or "").strip()
 
         import yaml
@@ -601,21 +633,59 @@ class HostServer:
         target = providers_dict.setdefault(channel_id, {})
         if new_base_url:
             target["base_url"] = new_base_url
+        if new_model:
+            target["model"] = new_model
         if new_api_key:
             target["api_key"] = new_api_key
 
         with open(cfg_path, "w", encoding="utf-8") as f:
             yaml.safe_dump(cfg_data, f, allow_unicode=True, sort_keys=False)
 
-        # 内存同步
+        # 内存配置同步
         mem_target = self.unified.config.setdefault("providers", {}).setdefault(channel_id, {})
         if new_base_url:
             mem_target["base_url"] = new_base_url
+        if new_model:
+            mem_target["model"] = new_model
         if new_api_key:
             mem_target["api_key"] = new_api_key
 
-        logger.info("[接口池更新] 供应商通道 %s 接口配置已成功写回 config.yaml", channel_id)
-        return _json({"ok": True, "msg": f"通道 {channel_id} 配置已更新并持久化", "id": channel_id})
+        # 热同步到出站网关。GatewayClient 每次请求都重读 EndpointConfig 的字段，
+        # 所以原地改就能立刻生效，不用重建连接池。三个通道一视同仁——之前只同步
+        # llm，改 embedding/rerank 会写进 yaml 但进程内仍走旧值，直到重启才对上。
+        if channel_id in GATEWAY_ENDPOINTS:
+            endpoint = getattr(self.unified.gateway, channel_id, None)
+            if isinstance(endpoint, EndpointConfig):
+                if new_base_url:
+                    endpoint.base_url = new_base_url
+                if new_model:
+                    endpoint.model = new_model
+                if new_api_key:
+                    endpoint.api_key = new_api_key
+
+        # 默认 LLM 模型换了，还要连带刷新 Provider 实例上的 model_name
+        if new_model and channel_id == "llm":
+            self.unified.set_default_llm_model(new_model)
+
+        warning = ""
+        if new_model and channel_id == "embedding":
+            # 换 embedding 模型而不重建索引，检索不会报错，只会静默地返回错误结果。
+            warning = "embedding 模型已切换，但现有 FAISS 索引是旧模型建的；重建索引前检索结果不可信。"
+            logger.warning("[接口池更新] %s", warning)
+
+        effective_model = new_model or mem_target.get("model") or ""
+        logger.info(
+            "[接口池更新] 供应商通道 %s 接口配置已成功更新并写回 config.yaml (model=%s)",
+            channel_id,
+            effective_model or "-",
+        )
+        return _json({
+            "ok": True,
+            "msg": f"通道 {channel_id} 配置已更新并持久化",
+            "id": channel_id,
+            "model": effective_model,
+            "warning": warning,
+        })
 
     async def start(self) -> None:
         self._runner = web.AppRunner(self.app, access_log=None)

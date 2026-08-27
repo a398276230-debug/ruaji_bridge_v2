@@ -574,11 +574,38 @@
       <h2 class="section-title">统一宿主总览 (Unified AstrBot Host)</h2>
       <div class="cards" id="host-overview-cards"></div>
 
+      <!-- 全局默认模型配置卡片 -->
+      <div class="cfg-card" style="margin-top: 16px; margin-bottom: 20px;">
+        <div class="cfg-card-header">
+          <span class="cfg-icon">🤖</span>
+          <h3>全局默认模型 (Global Default LLM Model)</h3>
+        </div>
+        <div class="cfg-card-body">
+          <p class="field-desc" style="margin-bottom: 12px;">
+            宿主维护全局权威默认模型 <code>providers.llm.model</code>。所有未显式指定专属模型的插件（包括 LivingMemory、GroupChatPlus 等）均自动由宿主直接注入此默认模型。修改后即刻热生效并落盘写回 <code>config.yaml</code>。
+          </p>
+          <div class="field-row">
+            <label>默认 LLM 模型名称 (Model Name)
+              <div class="input-with-preset">
+                <input type="text" id="host-default-model-input" placeholder="gemini-3.7-flash-nv" list="preset-host-default-models">
+                <!-- 候选项由 renderHost() 从 /api/host/providers 的 availableModels 填充，
+                     不在这里硬编码：宿主注册的模型清单会变，两份必然漂移 -->
+                <datalist id="preset-host-default-models"></datalist>
+              </div>
+              <span class="field-desc">当前全局对话与插件公共调用的默认模型标识</span>
+            </label>
+            <div style="display: flex; align-items: flex-end; padding-bottom: 4px;">
+              <button class="btn primary" id="host-save-default-model-btn" type="button">💾 保存并应用默认模型</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <h2 class="section-title">接口供应商池 (Providers Channel Pool)</h2>
       <div class="table-wrap">
         <table id="providers-table">
           <thead>
-            <tr><th>接口通道 ID</th><th>通道类型</th><th>Base URL</th><th>API Key 状态</th><th>操作</th></tr>
+            <tr><th>接口通道 ID</th><th>通道类型</th><th>Base URL</th><th>当前模型</th><th>API Key 状态</th><th>操作</th></tr>
           </thead>
           <tbody></tbody>
         </table>

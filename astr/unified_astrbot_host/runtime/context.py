@@ -147,6 +147,37 @@ class UnifiedContext:
             self.gateway.rerank.model or "(未配置，退化为纯 RRF)",
         )
 
+    def set_default_llm_model(self, model_name: str) -> None:
+        """热更新全局默认 LLM 模型。
+
+        改的是出站网关与默认 Provider 实例本身，所以对所有共享该实例的调用方
+        （宿主对话、未指定专属 Provider 的插件）即刻生效，无需重启。
+        """
+        if not model_name:
+            return
+        # 1. 更新网关出站 LLM 默认模型
+        if hasattr(self.gateway, "llm"):
+            self.gateway.llm.model = model_name
+
+        # 2. 更新内存配置
+        providers = self.config.setdefault("providers", {})
+        llm_cfg = providers.setdefault("llm", {})
+        llm_cfg["model"] = model_name
+
+        # 3. 更新 Context 中的默认 Provider 实例
+        #
+        # 插件侧不需要单独同步。未指定 provider_settings.llm_provider_id 的插件
+        # 拿到的就是这里这个默认实例本身（LivingMemory 见 plugin_initializer.py
+        # 的默认 Provider 分支），原地改字段所有持有者立刻可见；指定了专属
+        # Provider 的插件则是用户的显式选择，全局默认模型不该去覆盖它。
+        default_prov = self.context.get_using_provider()
+        if default_prov and hasattr(default_prov, "model_name"):
+            default_prov.model_name = model_name
+            if isinstance(getattr(default_prov, "provider_config", None), dict):
+                default_prov.provider_config["model"] = model_name
+
+        logger.info("全局默认 LLM 模型已热切换为: %s", model_name)
+
     def _install_persona(self) -> None:
         """装人格。
 

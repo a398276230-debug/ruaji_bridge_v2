@@ -68,6 +68,9 @@ astr/**/*.db-shm
 astr/**/*.index
 astr/**/config.yaml
 !astr/**/config.example.yaml
+# 曾把明文 API Key 提交进仓库（eede321），永不入库。
+# 注意不要放宽成 astr/**/config.json —— group_chat_plus 的同名文件是正常跟踪的。
+astr/**/hermes_config.json
 astr/unified_astrbot_host/tests/
 
 # ==========================================

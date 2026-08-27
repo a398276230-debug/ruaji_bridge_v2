@@ -52,46 +52,6 @@ export class SystemPage {
 
     // 更新记忆整合状态 - 需要单独获取
     this.fetchConsolidation();
-    this.fetchProviderConfig();
-  }
-
-  async fetchProviderConfig() {
-    try {
-      const data = await this.api.get("hermes/config");
-      const cfg = data.data || data;
-      const fields = ["llm_base_url", "llm_model", "llm_api_key", "embedding_base_url", "embedding_model", "embedding_dim", "embedding_api_key", "rerank_base_url", "rerank_model", "rerank_api_key"];
-      fields.forEach(key => {
-        const el = document.getElementById("hp-" + key.replaceAll("_", "-"));
-        if (el) el.value = key.endsWith("_api_key") ? "" : (cfg[key] ?? "");
-      });
-      const result = document.getElementById("hp-save-result");
-      if (result && (cfg.environment_overrides || []).length) result.textContent = "环境变量覆盖: " + cfg.environment_overrides.join(", ");
-    } catch (e) {
-      const result = document.getElementById("hp-save-result");
-      if (result) result.textContent = "配置读取失败: " + e.message;
-    }
-  }
-
-  async saveProviderConfig() {
-    const button = document.getElementById("hp-save-btn");
-    const result = document.getElementById("hp-save-result");
-    const keys = ["llm_base_url", "llm_model", "llm_api_key", "embedding_base_url", "embedding_model", "embedding_dim", "embedding_api_key", "rerank_base_url", "rerank_model", "rerank_api_key"];
-    const payload = {};
-    keys.forEach(key => {
-      const el = document.getElementById("hp-" + key.replaceAll("_", "-"));
-      if (el && (!key.endsWith("_api_key") || el.value)) payload[key] = el.value;
-    });
-    if (button) button.disabled = true;
-    try {
-      const response = await this.api.post("hermes/config", payload, { retries: 0 });
-      if (result) result.textContent = response.restart_required ? "已保存，请重启 LivingMemory 使配置生效。" : "已保存。";
-      this.showToast("Hermes 模型配置已保存");
-    } catch (e) {
-      if (result) result.textContent = "保存失败: " + e.message;
-      this.showToast(e.message, true);
-    } finally {
-      if (button) button.disabled = false;
-    }
   }
 
   /**
@@ -343,8 +303,6 @@ export class SystemPage {
   initEventListeners() {
     const runBtn = document.getElementById("cons-run-btn");
     if (runBtn) runBtn.addEventListener("click", () => this.runConsolidation());
-    const providerSaveBtn = document.getElementById("hp-save-btn");
-    if (providerSaveBtn) providerSaveBtn.addEventListener("click", () => this.saveProviderConfig());
   }
 
   /**
