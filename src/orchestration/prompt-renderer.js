@@ -1,12 +1,8 @@
 /**
  * orchestration/prompt-renderer.js — Prompt 渲染
  *
- * 逐字复刻旧 Bridge 的三分支 systemText（bridge.js:769-788）与 userContent
- * 组装（bridge.js:1685-1700）。文案一个字都不能改——现网的人设与行为是在
- * 这套 prompt 上调出来的，改一个标点就是行为变更。
- *
- * 与旧实现的结构差异：旧代码直接调 selfLearning.getDynamicVoicePrompt() 等
- * 具体模块；这里改成从 ContextBlock 的 metadata.slot 取值，谁提供的不关心。
+ * 负责 systemText 与 userContent 的格式化和组装。
+ * 从 ContextBlock 的 metadata.slot 取值进行结构化合并。
  *
  * slot 约定：
  *   voice   ruaji 语气画像（只对主人分支作为开头）
@@ -55,12 +51,19 @@ export function formatMsgTime(eventTime) {
   });
 }
 
+/** systemText / userContent 认得的 slot；其余一律归到 extra */
+const SLOT_NAMES = ['voice', 'meme', 'slang', 'recent', 'extra'];
+
 /** 把 ContextBlock 数组按 slot 分组 */
 export function groupBySlot(blocks) {
   const slots = { voice: [], meme: [], slang: [], recent: [], extra: [] };
   for (const block of blocks ?? []) {
-    const slot = block.metadata?.slot ?? 'extra';
-    (slots[slot] ?? slots.extra).push(block.text.trim());
+    const raw = block.metadata?.slot ?? 'extra';
+    // slot 可能来自远程 Provider 的 JSON（coerceContextBlocks 会取 item.detail.slot）。
+    // 不能直接拿它索引 slots：'constructor'/'toString' 这类键会命中 Object.prototype
+    // 返回函数而非 undefined，?? 兜不住，.push 当场抛 TypeError 让整轮回复失败。
+    const slot = SLOT_NAMES.includes(raw) ? raw : 'extra';
+    slots[slot].push(block.text.trim());
   }
   return {
     voice: slots.voice.join('\n'),

@@ -24,6 +24,7 @@ export class ContextFlow {
    * @param {import('../storage/affection-store.js').AffectionStore} opts.affectionStore
    * @param {import('../storage/portrayal-store.js').PortrayalStore} [opts.portrayalStore]
    * @param {import('./portrayal-worker.js').PortrayalWorker} [opts.portrayalWorker]
+   * @param {import('../storage/meme-store.js').MemeStore} [opts.memeStore]
    * @param {object} opts.config
    * @param {import('../core/logger.js').Logger} opts.logger
    */
@@ -33,6 +34,7 @@ export class ContextFlow {
     this.affection = opts.affectionStore;
     this.portrayal = opts.portrayalStore ?? null;
     this.portrayalWorker = opts.portrayalWorker ?? null;
+    this.memeStore = opts.memeStore ?? null;
     this.config = opts.config;
     this.log = opts.logger?.child({ component: 'context-flow' }) ?? console;
     /** 可选：运维面板的追踪采集器，不注入就是 null，行为不变 */
@@ -41,6 +43,24 @@ export class ContextFlow {
   }
 
   _registerLocalProviders() {
+    // 表情包语义工具规则：指导模型调用 search_memes 工具与输出 &&meme:ID&&
+    this.aggregator.registerLocal({
+      id: 'meme-rules',
+      priority: 75,
+      collect: () => {
+        const text = this.memeStore?.getSemanticToolPrompt?.();
+        if (!text) return [];
+        return [
+          createContextBlock({
+            source: 'meme-rules',
+            priority: 75,
+            text,
+            metadata: { slot: 'meme' },
+          }),
+        ];
+      },
+    });
+
     // 本地群聊滑窗：GCP 不可用时的兜底，优先级低于远程（远程 90）
     this.aggregator.registerLocal({
       id: 'local-window',

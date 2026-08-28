@@ -190,6 +190,7 @@ export function createContainer(config, overrides = {}) {
     affectionStore,
     portrayalStore,
     portrayalWorker,
+    memeStore,
     config,
     logger,
     traceCollector,
