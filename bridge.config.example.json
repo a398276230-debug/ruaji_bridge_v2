@@ -25,6 +25,7 @@
     "apiKeyEnv": "HERMES_API_KEY",
     "sessionHeader": "X-Hermes-Session-Id",
     "sessionPrefix": "qq_",
+    "sessionCutoffHour": 7,
     "timeoutMs": 1800000,
     "stream": true,
     "maxRetries": 0

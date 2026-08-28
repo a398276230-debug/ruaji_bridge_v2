@@ -34,6 +34,9 @@ export class OpenAiCompatibleAdapter {
     this.apiKey = opts.apiKey ?? '';
     this.sessionHeader = opts.sessionHeader ?? null;
     this.sessionPrefix = opts.sessionPrefix ?? '';
+    // 0 点是合法分界，不能用 `|| 7` 兜底（会把 0 和 "0" 一起吃掉）
+    const cutoff = Number(opts.sessionCutoffHour);
+    this.sessionCutoffHour = Number.isInteger(cutoff) && cutoff >= 0 && cutoff <= 23 ? cutoff : 7;
     this.timeoutMs = opts.timeoutMs ?? 1800000;
     this.maxRetries = opts.maxRetries ?? 0;
     this.log = opts.logger?.child({ component: 'model-adapter' }) ?? console;
@@ -51,19 +54,40 @@ export class OpenAiCompatibleAdapter {
     return String(key ?? '').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 60);
   }
 
-  getSessionId(sessionKey) {
+  /**
+   * 计算以北京时间 (UTC+8) 每日 cutoffHour 点为分界的业务日期标记 (YYYYMMDD)
+   * 分界点之前归属上一天，分界点及之后归属当天。默认 7 点，可由 model.sessionCutoffHour 配置。
+   * 严格基于 UTC 偏移计算，不受运行环境/宿主系统时区干扰。
+   */
+  static getBusinessDateTag(now = new Date(), cutoffHour = 7) {
+    const d = now instanceof Date ? now : new Date(now);
+    const bjAdjusted = new Date(d.getTime() + (8 - cutoffHour) * 3600000);
+    const y = bjAdjusted.getUTCFullYear();
+    const m = String(bjAdjusted.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(bjAdjusted.getUTCDate()).padStart(2, '0');
+    return `${y}${m}${day}`;
+  }
+
+  getSessionId(sessionKey, now = new Date()) {
     const key = OpenAiCompatibleAdapter.sanitizeSessionKey(sessionKey);
-    if (!this.sessions.has(key)) this.sessions.set(key, `${this.sessionPrefix}${key}`);
-    return this.sessions.get(key);
+    const currentTag = OpenAiCompatibleAdapter.getBusinessDateTag(now, this.sessionCutoffHour);
+    const entry = this.sessions.get(key);
+    if (!entry || entry.tag !== currentTag) {
+      const newId = `${this.sessionPrefix}${key}_${currentTag}`;
+      this.sessions.set(key, { tag: currentTag, sessionId: newId });
+      return newId;
+    }
+    return entry.sessionId;
   }
 
   /**
    * 重置会话：删除服务端旧会话并轮换 id。
    * Hermes 的"新会话"语义 = 调用方轮换会话头，模型侧不解析 /new 文本。
    */
-  async resetSession(sessionKey) {
+  async resetSession(sessionKey, now = new Date()) {
     const key = OpenAiCompatibleAdapter.sanitizeSessionKey(sessionKey);
-    const oldId = this.sessions.get(key);
+    const currentTag = OpenAiCompatibleAdapter.getBusinessDateTag(now, this.sessionCutoffHour);
+    const oldId = this.sessions.get(key)?.sessionId;
     if (oldId) {
       try {
         await this.fetchImpl(`${this.baseUrl.replace(/\/v1$/, '')}/api/sessions/${encodeURIComponent(oldId)}`, {
@@ -75,8 +99,8 @@ export class OpenAiCompatibleAdapter {
         this.log.debug('删除服务端会话失败（忽略）', { error: err.message });
       }
     }
-    const newId = `${this.sessionPrefix}${key}_${Date.now()}`;
-    this.sessions.set(key, newId);
+    const newId = `${this.sessionPrefix}${key}_${currentTag}_${Date.now()}`;
+    this.sessions.set(key, { tag: currentTag, sessionId: newId });
     return newId;
   }
 

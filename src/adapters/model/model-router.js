@@ -22,6 +22,7 @@ export function createModelAdapter(config, { logger, fetchImpl } = {}) {
       apiKey: config.secrets?.modelApiKey ?? '',
       sessionHeader: config.model.sessionHeader,
       sessionPrefix: config.model.sessionPrefix,
+      sessionCutoffHour: config.model.sessionCutoffHour,
       timeoutMs: config.model.timeoutMs,
       maxRetries: config.model.maxRetries,
       logger,
@@ -61,12 +62,12 @@ export class ModelRouter {
     return this.select(modelRequest).generate(modelRequest, opts);
   }
 
-  getSessionId(sessionKey) {
-    return this.defaultAdapter.getSessionId?.(sessionKey) ?? null;
+  getSessionId(sessionKey, now) {
+    return this.defaultAdapter.getSessionId?.(sessionKey, now) ?? null;
   }
 
-  resetSession(sessionKey) {
-    return this.defaultAdapter.resetSession(sessionKey);
+  resetSession(sessionKey, now) {
+    return this.defaultAdapter.resetSession(sessionKey, now);
   }
 
   ping() {

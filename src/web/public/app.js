@@ -903,6 +903,7 @@ async function renderSettings() {
   $('#cfg-model-key').value = d.config.model?.apiKeyMasked ?? '';
   $('#cfg-model-env').value = d.config.model?.apiKeyEnv ?? '';
   $('#cfg-model-timeout').value = d.config.model?.timeoutMs ?? 1800000;
+  $('#cfg-model-cutoff-hour').value = d.config.model?.sessionCutoffHour ?? 7;
   $('#cfg-model-stream').checked = d.config.model?.stream !== false;
   $('#cfg-model-key-desc').textContent = d.config.model?.hasApiKey
     ? '已配置独立密钥（留空或掩码保持不变）'
@@ -987,6 +988,9 @@ async function saveSettings() {
         apiKey: $('#cfg-model-key').value.trim(),
         apiKeyEnv: $('#cfg-model-env').value.trim(),
         timeoutMs: Number($('#cfg-model-timeout').value) || 1800000,
+        sessionCutoffHour: $('#cfg-model-cutoff-hour').value.trim() === ''
+          ? 7
+          : Number($('#cfg-model-cutoff-hour').value),
         stream: $('#cfg-model-stream').checked,
       },
       meme: {

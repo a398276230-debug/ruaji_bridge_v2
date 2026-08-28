@@ -29,7 +29,7 @@ function isMasked(str) {
 }
 
 export function createConfigApi(deps) {
-  const { config, memeStore, portrayalStore, sessionStore, logger, fetchImpl = fetch } = deps;
+  const { config, memeStore, portrayalStore, sessionStore, modelAdapter, logger, fetchImpl = fetch } = deps;
   const log = logger?.child({ component: 'web-config' }) ?? console;
 
   /** 配置落盘位置。走 paths.configFile，测试会把它指到临时目录以免覆盖实盘配置 */
@@ -81,6 +81,7 @@ export function createConfigApi(deps) {
           hasApiKey: Boolean(config.secrets?.modelApiKey || rawConfig.model?.apiKey),
           sessionHeader: config.model?.sessionHeader ?? 'X-Hermes-Session-Id',
           sessionPrefix: config.model?.sessionPrefix ?? 'qq_',
+          sessionCutoffHour: config.model?.sessionCutoffHour ?? 7,
           timeoutMs: config.model?.timeoutMs ?? 1800000,
           stream: config.model?.stream !== false,
           maxRetries: config.model?.maxRetries ?? 0,
@@ -240,6 +241,12 @@ export function createConfigApi(deps) {
       if (updates.model) {
         if (!updates.model.baseUrl) errors.push('模型 API Base URL 不能为空');
         if (!updates.model.model) errors.push('模型名称 不能为空');
+        if (updates.model.sessionCutoffHour != null) {
+          const h = Number(updates.model.sessionCutoffHour);
+          if (!Number.isInteger(h) || h < 0 || h > 23) {
+            errors.push(`每日会话轮转时间 非法: ${updates.model.sessionCutoffHour}（应为 0-23 的整数）`);
+          }
+        }
       }
 
       if (updates.napcat) {
@@ -305,6 +312,7 @@ export function createConfigApi(deps) {
         }
         if (updates.model.sessionHeader) m.sessionHeader = updates.model.sessionHeader.trim();
         if (updates.model.sessionPrefix) m.sessionPrefix = updates.model.sessionPrefix.trim();
+        if (updates.model.sessionCutoffHour != null) m.sessionCutoffHour = Number(updates.model.sessionCutoffHour);
         if (updates.model.timeoutMs != null) m.timeoutMs = Number(updates.model.timeoutMs);
         if (updates.model.stream != null) m.stream = Boolean(updates.model.stream);
         diskConfig.model = m;
@@ -418,6 +426,11 @@ export function createConfigApi(deps) {
         if (sessionStore && diskConfig.decision.localWindowSize) {
           sessionStore.windowSize = diskConfig.decision.localWindowSize;
         }
+      }
+      if (diskConfig.model?.sessionCutoffHour != null) {
+        config.model.sessionCutoffHour = diskConfig.model.sessionCutoffHour;
+        // 分界值在适配器构造时就取好了，必须同步推给活着的实例，否则要重启才生效
+        if (modelAdapter) modelAdapter.sessionCutoffHour = diskConfig.model.sessionCutoffHour;
       }
       if (diskConfig.context) Object.assign(config.context, diskConfig.context);
       if (diskConfig.reply) Object.assign(config.reply, diskConfig.reply);

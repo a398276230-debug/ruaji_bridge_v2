@@ -430,6 +430,12 @@
                 <input type="number" id="cfg-model-timeout" placeholder="1800000">
                 <span class="field-desc">单次模型推理等待上限，默认 1800000ms (30分钟)</span>
               </label>
+              <label>每日会话轮转时间 (点，0-23)
+                <input type="number" id="cfg-model-cutoff-hour" min="0" max="23" placeholder="7">
+                <span class="field-desc">以北京时间指定整点开启全新 Hermes 会话，默认 7 点</span>
+              </label>
+            </div>
+            <div class="field-row">
               <label class="check check-inline">
                 <input type="checkbox" id="cfg-model-stream" checked> 启用流式切句传输 (Stream SSE)
               </label>
