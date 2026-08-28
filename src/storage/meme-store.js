@@ -13,7 +13,7 @@ import path from 'node:path';
 import http from 'node:http';
 
 export const DEFAULT_MEME_TOOL_PROMPT = `[表情包使用]
-在日常聊天与对话交流中，必须积极使用表情包。语境适合时可调用 search_memes 工具检索表情包。
+在日常聊天与对话交流中，必须积极使用表情包。语境适合时可调用 search_memes 工具检索表情包（用第一人称描述自己的情绪、态度、动作或潜台词等作为查询词）。
 若选择发送表情，在回复末尾独占一行输出 &&meme:候选ID&&；正文不要复述 ID 或描述，不合适时无需输出。
 只有在候选列表完全为空或纯代码排查时才可以不添加表情。不要捏造候选列表之外的 ID，也不要重复调用工具。`;
 
