@@ -9,7 +9,7 @@ import { OpenAiCompatibleAdapter } from './openai-compatible.js';
 import { MockModelAdapter } from './mock-model.js';
 import { ConfigError } from '../../contracts/errors.js';
 
-export function createModelAdapter(config, { logger, fetchImpl } = {}) {
+export function createModelAdapter(config, { logger, fetchImpl, sessionStore } = {}) {
   const provider = config.model.provider;
 
   if (provider === 'mock') {
@@ -23,6 +23,7 @@ export function createModelAdapter(config, { logger, fetchImpl } = {}) {
       sessionHeader: config.model.sessionHeader,
       sessionPrefix: config.model.sessionPrefix,
       sessionCutoffHour: config.model.sessionCutoffHour,
+      sessionStore,
       timeoutMs: config.model.timeoutMs,
       maxRetries: config.model.maxRetries,
       logger,

@@ -13,6 +13,7 @@
 import { createModelResponse } from '../../contracts/messages.js';
 import { validateModelRequest } from '../../contracts/schemas/index.js';
 import { ModelError } from '../../contracts/errors.js';
+import { ModelSessionStore } from '../../storage/model-session-store.js';
 import { randomUUID } from 'node:crypto';
 
 export class OpenAiCompatibleAdapter {
@@ -27,6 +28,8 @@ export class OpenAiCompatibleAdapter {
    * @param {number} [opts.maxRetries=0]
    * @param {import('../../core/logger.js').Logger} [opts.logger]
    * @param {typeof fetch} [opts.fetchImpl]
+   * @param {object} [opts.sessionStore] 共享的 ModelSessionStore（进程内唯一），优先于 cacheDir
+   * @param {string} [opts.cacheDir] 兜底：自建 store，仅限单 adapter 场景
    */
   constructor(opts = {}) {
     this.baseUrl = String(opts.baseUrl ?? '').replace(/\/$/, '');
@@ -41,8 +44,11 @@ export class OpenAiCompatibleAdapter {
     this.maxRetries = opts.maxRetries ?? 0;
     this.log = opts.logger?.child({ component: 'model-adapter' }) ?? console;
     this.fetchImpl = opts.fetchImpl ?? globalThis.fetch;
-    /** sessionKey -> 当前会话 id。/new 命令通过 resetSession 轮换。 */
-    this.sessions = new Map();
+    // 会话映射存储：正常由 container 建好全局唯一实例后注入（多个 adapter 必须共用同一个，
+    // 否则各自的内存快照落盘时会整文件覆盖，抹掉对方的 /new 分支）。
+    // cacheDir 只是独立跑单个 adapter 时的兜底；无二者则退化为内存 Map（mock/沙箱零侵入）。
+    this.sessionStore = opts.sessionStore
+      ?? (opts.cacheDir ? new ModelSessionStore({ cacheDir: opts.cacheDir, logger: opts.logger }) : new Map());
   }
 
   get chatUrl() {
@@ -71,10 +77,10 @@ export class OpenAiCompatibleAdapter {
   getSessionId(sessionKey, now = new Date()) {
     const key = OpenAiCompatibleAdapter.sanitizeSessionKey(sessionKey);
     const currentTag = OpenAiCompatibleAdapter.getBusinessDateTag(now, this.sessionCutoffHour);
-    const entry = this.sessions.get(key);
+    const entry = this.sessionStore.get(key);
     if (!entry || entry.tag !== currentTag) {
       const newId = `${this.sessionPrefix}${key}_${currentTag}`;
-      this.sessions.set(key, { tag: currentTag, sessionId: newId });
+      this.sessionStore.set(key, { tag: currentTag, sessionId: newId, counter: 1 });
       return newId;
     }
     return entry.sessionId;
@@ -87,7 +93,8 @@ export class OpenAiCompatibleAdapter {
   async resetSession(sessionKey, now = new Date()) {
     const key = OpenAiCompatibleAdapter.sanitizeSessionKey(sessionKey);
     const currentTag = OpenAiCompatibleAdapter.getBusinessDateTag(now, this.sessionCutoffHour);
-    const oldId = this.sessions.get(key)?.sessionId;
+    const oldEntry = this.sessionStore.get(key);
+    const oldId = oldEntry?.sessionId;
     if (oldId) {
       try {
         await this.fetchImpl(`${this.baseUrl.replace(/\/v1$/, '')}/api/sessions/${encodeURIComponent(oldId)}`, {
@@ -99,8 +106,11 @@ export class OpenAiCompatibleAdapter {
         this.log.debug('删除服务端会话失败（忽略）', { error: err.message });
       }
     }
-    const newId = `${this.sessionPrefix}${key}_${currentTag}_${Date.now()}`;
-    this.sessions.set(key, { tag: currentTag, sessionId: newId });
+    const prevCounter = (oldEntry?.tag === currentTag && Number.isInteger(oldEntry.counter)) ? oldEntry.counter : 1;
+    const nextCounter = prevCounter + 1;
+    const counterStr = String(nextCounter).padStart(2, '0');
+    const newId = `${this.sessionPrefix}${key}_${currentTag}_#${counterStr}`;
+    this.sessionStore.set(key, { tag: currentTag, sessionId: newId, counter: nextCounter });
     return newId;
   }
 

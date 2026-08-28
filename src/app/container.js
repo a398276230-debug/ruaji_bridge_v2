@@ -24,6 +24,7 @@ import { MediaIngestor } from '../adapters/napcat/media-ingestor.js';
 import { InboundNormalizer } from '../adapters/napcat/inbound-normalizer.js';
 import { Sender } from '../adapters/napcat/sender.js';
 import { createModelAdapter, ModelRouter } from '../adapters/model/model-router.js';
+import { ModelSessionStore } from '../storage/model-session-store.js';
 import { OpenAiCompatibleAdapter } from '../adapters/model/openai-compatible.js';
 
 import { AffectionStore } from '../storage/affection-store.js';
@@ -143,7 +144,14 @@ export function createContainer(config, overrides = {}) {
   });
 
   // ===== 模型 =====
-  const modelAdapter = overrides.modelAdapter ?? createModelAdapter(config, { logger, fetchImpl });
+  // 会话映射存储全进程唯一：主对话与画像 adapter 必须共用同一个实例。
+  // 各建各的会导致两份内存快照整文件互相覆盖，重启后 /new 分支丢失。
+  const modelSessionStore = overrides.modelSessionStore ?? new ModelSessionStore({
+    cacheDir: config.paths.cacheDir,
+    logger,
+  });
+  const modelAdapter = overrides.modelAdapter
+    ?? createModelAdapter(config, { logger, fetchImpl, sessionStore: modelSessionStore });
   const modelRouter = new ModelRouter({ defaultAdapter: modelAdapter, logger });
 
   // 画像分析可单独指一个更轻量的 endpoint；不填 baseUrl 就继续走主对话模型。
@@ -152,9 +160,11 @@ export function createContainer(config, overrides = {}) {
     const portrayalAdapter = overrides.portrayalAdapter ?? new OpenAiCompatibleAdapter({
       baseUrl: config.portrayal.baseUrl,
       model: config.portrayal.model || config.model.model,
-      apiKey: config.secrets.portrayalApiKey ?? '',
+      apiKey: config.secrets?.portrayalApiKey ?? '',
       sessionHeader: config.model.sessionHeader,
       sessionPrefix: config.model.sessionPrefix,
+      sessionCutoffHour: config.model.sessionCutoffHour,
+      sessionStore: modelSessionStore,
       timeoutMs: config.model.timeoutMs,
       maxRetries: config.model.maxRetries,
       logger,
@@ -282,6 +292,7 @@ export function createContainer(config, overrides = {}) {
     portrayalStore,
     memeStore,
     sessionStore,
+    modelSessionStore,
     dedupStore,
     sendQueueStore,
     // adapters
