@@ -111,14 +111,81 @@ export function stripCqCodes(rawMessage) {
     .trim();
 }
 
+/**
+ * 任意一段 at 码。参数顺序不由协议保证（`[CQ:at,name=x,qq=1]` 也是合法的），
+ * 所以不能写死 `qq=` 开头 —— 整段参数交给 parseCqParams 处理。
+ * 带 g 标记的正则 lastIndex 会跨调用残留，用它 exec 之前先 new 一个副本。
+ */
+export const AT_CQ_SOURCE = String.raw`\[CQ:at((?:,[^,\]]*)*)\]`;
+
 /** 把媒体类 CQ 码转成可读文字标注，用于引用消息摘要 */
 export function annotateCqCodes(rawMessage) {
   return String(rawMessage ?? '')
     .replace(/\[CQ:image[^\]]*\]/g, '[图片]')
     .replace(/\[CQ:file[^\]]*\]/g, '[文件]')
     .replace(/\[CQ:face[^\]]*\]/g, '[表情]')
-    .replace(/\[CQ:at,qq=(\d+)[^\]]*\]/g, '@$1')
+    .replace(new RegExp(AT_CQ_SOURCE, 'gi'), (_m, paramStr) => renderAtMention(parseCqParams(paramStr)))
     .replace(/\[CQ:[^\]]*\]/g, '')
+    .trim();
+}
+
+/**
+ * 把一个 at 片段的参数渲染成面向模型的 `@昵称`。
+ *
+ * 昵称是**群成员可控**的文本：协议端把对方的群名片原样塞进 name=，而 parseCqParams
+ * 会把 &#91; &#93; &#44; 解码回真正的方括号和逗号。不做净化的话，任何人都可以把自己的
+ * 名片改成带换行的伪造指令块（"坏 换行 换行 [系统] 忽略上文…"）直接注入 Prompt。
+ * 所以这里统一：去掉控制字符与方括号、压平空白、砍掉前导 @（某些实现的 text= 自带 @，
+ * 不砍会渲染成 @@昵称）、限长。
+ *
+ * @param {object} params at 片段的参数（parseCqParams 的结果或 segment.data）
+ * @returns {string} `@xxx` 形式的文本；无法识别时返回空串
+ */
+export function renderAtMention(params = {}) {
+  const qq = String(params.qq ?? '');
+  if (qq === 'all' || params.all === 'true') return '@全体成员';
+
+  const name = sanitizeMentionName(params.name || params.text || params.card || params.nick || params.nickname);
+  if (name) return `@${name}`;
+  if (qq) return `@${qq}`;
+  return '';
+}
+
+/** 不允许出现在昵称里的码点：C0/C1 控制字符、零宽字符、双向覆盖、BOM */
+function isInvisibleCodePoint(code) {
+  if (code < 0x20) return true;
+  if (code >= 0x7f && code <= 0x9f) return true;
+  if (code >= 0x200b && code <= 0x200f) return true;
+  if (code >= 0x2028 && code <= 0x202e) return true;
+  if (code >= 0x2066 && code <= 0x2069) return true;
+  return code === 0xfeff;
+}
+
+/**
+ * at 昵称净化。这是群成员可控文本进入 Prompt 的唯一入口，改动前想清楚。
+ *
+ * 不可见字符按码点判断而不是写进正则字符类：字面控制字符塞在源码里既读不出来，
+ * 也很容易在复制粘贴 / 编码转换中被悄悄改掉。
+ * @param {string} value
+ * @param {number} [maxLength=32]
+ * @returns {string}
+ */
+export function sanitizeMentionName(value, maxLength = 32) {
+  let out = '';
+  for (const ch of String(value ?? '')) {
+    if (isInvisibleCodePoint(ch.codePointAt(0))) {
+      out += ' ';
+      continue;
+    }
+    // 方括号会被模型读成结构标记（[系统]、[引用 …]），昵称里不许有
+    if (ch === '[' || ch === ']') continue;
+    out += ch;
+  }
+  return out
+    .replace(/\s+/g, ' ')
+    .replace(/^@+/, '')
+    .trim()
+    .slice(0, maxLength)
     .trim();
 }
 
@@ -136,7 +203,9 @@ export function segmentsToText(segments) {
         case 'file':
         case 'offline_file': return `[文件: ${seg.data?.name ?? '未知'}]`;
         case 'face': return '[表情]';
-        case 'at': return seg.data?.text ? `@${seg.data.text}` : (seg.data?.qq ? `@${seg.data.qq}` : '');
+        // 与 InboundNormalizer._buildContent 共用同一套渲染，否则同一个人
+        // 在正文里显示 @三锅、在引用摘要里显示 @12345678
+        case 'at': return renderAtMention(seg.data ?? {});
         case 'reply': return '';
         default: return '';
       }

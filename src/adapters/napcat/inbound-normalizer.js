@@ -26,16 +26,18 @@ import {
   stripCqCodes,
   annotateCqCodes,
   segmentsToText,
+  renderAtMention,
+  AT_CQ_SOURCE,
 } from './cq.js';
 
 /**
- * 任意一段 CQ at 码。NapCat 会在 qq= 后面继续挂参数（`[CQ:at,qq=123,name=张三]`），
- * 所以尾部必须收 `[^\]]*` —— 只匹配 `qq=(\d+)\]` 的老写法会漏掉带 name 的那些。
- * 带 g 标记的正则 lastIndex 会跨调用残留，用它 exec 之前先 new 一个副本。
+ * 用 QQ 号拼 at 码正则。号码本该是纯数字，但配置没有格式校验，转义一下不亏。
+ *
+ * 已知局限：假设 qq= 紧跟在 CQ:at, 后面。OneBot 并不保证参数顺序，
+ * 若协议端发出 `[CQ:at,name=瑞姬,qq=<bot>]`，这里会漏判 —— 正文渲染有
+ * cq.js:renderAtMention 兜底（照样渲染成 @瑞姬），但 isAtBot 会是 false、唤醒会漏。
+ * 现网 NapCat 始终是 qq 在前，改成参数解析会牵动唤醒判定，留待单独验证。
  */
-const ANY_AT_SOURCE = String.raw`\[CQ:at,qq=(\d+)[^\]]*\]`;
-
-/** 用 QQ 号拼 at 码正则。号码本该是纯数字，但配置没有格式校验，转义一下不亏 */
 function buildAtRegex(qq, flags = 'i') {
   const escaped = String(qq ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(String.raw`\[CQ:at,qq=` + escaped + String.raw`[^\]]*\]`, flags);
@@ -287,10 +289,19 @@ export class InboundNormalizer {
       .join('\n');
     if (fileSummaries) clean = `${fileSummaries}\n${clean}`.trim();
 
-    // 保留对机器人的 @，转成文本让模型看得见
+    // 保留对机器人的 @，转成文本让模型看得见。
+    // 前后的空白一并吸收再补回单个空格，否则 "[@机器人] [@某人]" 会渲染出双空格。
     const botName = this.identity.botName ?? '瑞姬';
-    clean = clean.replace(buildAtRegex(this.identity.robotId, 'gi'), ` @${botName} `);
-    clean = clean.replace(new RegExp(ANY_AT_SOURCE, 'gi'), '').trim();
+    const botAt = buildAtRegex(this.identity.robotId, 'gi');
+    clean = clean.replace(new RegExp(`[ \\t]*(?:${botAt.source})[ \\t]*`, 'gi'), ` @${botName} `);
+    // 其余 @ 码转成 @昵称 / @QQ / @全体成员（渲染与净化统一在 cq.js:renderAtMention）。
+    // 尾随的 [ \t]* 是 OneBot 客户端在 @ 后自动补的空格，吸掉避免正文出现双空格。
+    clean = clean
+      .replace(new RegExp(`${AT_CQ_SOURCE}[ \\t]*`, 'gi'), (_match, paramStr) => {
+        const mention = renderAtMention(parseCqParams(paramStr));
+        return mention ? `${mention} ` : '';
+      })
+      .trim();
     // 其余 CQ 码（face 等）转成可读标注，不让裸 CQ 进 Prompt
     clean = annotateCqCodes(clean);
 
@@ -340,10 +351,14 @@ function extractReplyIdFromRaw(rawMessage) {
 /** 从 raw_message 与 segments 中提取被 @ 的用户（/好感度 @某人 命令要用） */
 export function extractAtTargets(rawMessage, segments = []) {
   const out = new Set();
-  const re = new RegExp(ANY_AT_SOURCE, 'gi');
+  // 用 cq.js 的统一 at 正则：参数顺序不由协议保证，写死 qq= 开头会漏掉 [CQ:at,name=x,qq=1]
+  const re = new RegExp(AT_CQ_SOURCE, 'gi');
   let m;
   const rawStr = String(rawMessage ?? '');
-  while ((m = re.exec(rawStr)) !== null) out.add(m[1]);
+  while ((m = re.exec(rawStr)) !== null) {
+    const qq = parseCqParams(m[1]).qq;
+    if (qq && /^\d+$/.test(qq)) out.add(qq);
+  }
   if (Array.isArray(segments)) {
     for (const seg of segments) {
       if (seg?.type === 'at' && seg.data?.qq) {
