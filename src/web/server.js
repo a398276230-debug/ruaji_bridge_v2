@@ -47,9 +47,6 @@ const MIME = Object.freeze({
 /** 请求体上限：面板不上传文件，1MB 足够，超了直接拒绝而不是撑爆内存 */
 const MAX_BODY_BYTES = 1024 * 1024;
 
-/** 旧 Bridge 的 http_server.js 与保留端口，撞上会让影子对照跑不起来 */
-export const LEGACY_BRIDGE_PORTS = Object.freeze([29998, 29999]);
-
 export class WebServer {
   /**
    * @param {object} deps  容器（createContainer 的产物）
@@ -73,17 +70,6 @@ export class WebServer {
   }
 
   listen(port = this.config.web?.port ?? 29998, host = this.config.web?.host ?? '127.0.0.1') {
-    // 任务书把面板定在 29998，而 README §1 把 29998/29999 留给了旧 Bridge。
-    // 两者只有在"旧 Bridge 也在跑"时才真冲突，所以这里不拒绝启动，只把
-    // 代价说清楚 —— 影子对照要并行时，改 web.port 即可，面板不参与主链路。
-    if (LEGACY_BRIDGE_PORTS.includes(Number(port))) {
-      this.log.warn('面板占用了旧 Bridge 的保留端口', {
-        port,
-        impact: '旧 Bridge 的 http_server.js 同时在跑时会 EADDRINUSE，影子对照无法并行',
-        fix: '设置 web.port（或环境变量 RUAJI_V2_WEB_PORT）改到 29995 等空闲端口',
-      });
-    }
-
     this.server = http.createServer((req, res) => {
       this._handle(req, res).catch((err) => {
         this.log.error('面板请求处理异常', { url: req.url, error: err.message });

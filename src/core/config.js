@@ -67,11 +67,7 @@ const DEFAULTS = {
   health: { port: 29996, lockPort: 29997 },
   /**
    * 运维面板。默认开启，只绑 127.0.0.1。
-   *
-   * 端口说明：README §1 要求 v2 不占 29998/29999，那条规则的目的是让 v2 与旧
-   * Bridge 能同时在线跑影子对照 —— 旧 Bridge 的 http_server.js 正是听 29998。
-   * 任务书把面板定在 29998，因此这里默认 29998，但保留 web.port 可配：
-   * 一旦要与旧 Bridge 并行，把它改成 29995 之类即可，面板不参与主链路，随时可搬。
+   * 端口保留 web.port 可配 —— 面板不参与主链路，随时可搬。
    */
   web: { enabled: true, host: '127.0.0.1', port: 29998, maxTraces: 200 },
   /** 统一 AstrBot 垫片宿主（F:\harness\unified_astrbot_host），面板据此探活 */
