@@ -213,6 +213,7 @@ export class InboundFlow {
           messageType: inbound.messageType,
           rawMessage: inbound.rawMessage,
           text: inbound.text,
+          content: inbound.content,
           nickname: inbound.sender.nickname,
           card: inbound.sender.card,
           displayName: inbound.sender.displayName,

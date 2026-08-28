@@ -151,12 +151,15 @@ class GroupChatPlusAdapter(UnifiedPluginContract):
         def _cache_ignored_message(source: str = "probability_filter") -> None:
             try:
                 cm = getattr(plugin, "cache_manager", None)
-                if cm and hasattr(cm, "add_to_cache") and message.text:
+                # content = 模型正文（CQ 码已由桥接转成 "@昵称"），text = 去 CQ 纯文本。
+                # 滑窗是喂给模型的群聊背景，必须用 content，否则 @ 谁在缓存里就丢了。
+                cache_text = str(message.content or message.text or "").strip()
+                if cm and hasattr(cm, "add_to_cache") and cache_text:
                     cm.add_to_cache(
                         chat_id,
                         {
                             "role": "user",
-                            "content": message.text,
+                            "content": cache_text,
                             "timestamp": time.time(),
                             "message_id": message.message_id,
                             "sender_id": message.user_id,
@@ -196,7 +199,8 @@ class GroupChatPlusAdapter(UnifiedPluginContract):
                 has_trigger_keyword,
                 None,
                 matched_trigger_keyword=matched_trigger_keyword,
-                original_message_text=message.text,
+                # 决策 AI 也应看到 "@昵称" 完整正文，否则它不知道这条消息在 @ 谁
+                original_message_text=str(message.content or message.text or ""),
             )
             if not should_reply:
                 _cache_ignored_message("decision_ai_no_reply")
@@ -217,17 +221,19 @@ class GroupChatPlusAdapter(UnifiedPluginContract):
     async def _format_context(
         self, plugin: Any, event: Any, message: InboundMessage, history: list[dict[str, Any]] | None,
     ) -> str:
+        # 决策上下文的"当前消息"用 content（含 @昵称），与滑窗正文口径一致
+        current_text = str(message.content or message.text or "")
         try:
             from astrbot_plugin_group_chat_plus.utils import ContextManager
             return await ContextManager.format_context_for_ai(
                 _build_history(history, is_private=message.is_private),
-                message.text,
+                current_text,
                 event.get_self_id(),
                 include_timestamp=bool(getattr(plugin, "include_timestamp", True)),
                 include_sender_info=bool(getattr(plugin, "include_sender_info", True)),
             )
         except Exception:
-            return message.text
+            return current_text
 
     # ---- 上下文注入 ----
 

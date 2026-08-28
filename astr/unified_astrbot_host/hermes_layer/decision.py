@@ -189,7 +189,8 @@ class DecisionEngine:
             has_trigger_keyword,
             None,
             matched_trigger_keyword=matched_trigger_keyword,
-            original_message_text=message.text,
+            # 决策 AI 也应看到 "@昵称" 完整正文（与适配器路径口径一致）
+            original_message_text=str(message.content or message.text or ""),
         )
 
         if not should_reply:
@@ -221,17 +222,19 @@ class DecisionEngine:
         message: InboundMessage,
         history: list[dict] | None,
     ) -> str:
+        # 决策上下文的"当前消息"用 content（含 @昵称），与适配器路径口径一致
+        current_text = str(message.content or message.text or "")
         try:
             from astrbot_plugin_group_chat_plus.utils import ContextManager
             return await ContextManager.format_context_for_ai(
                 build_history(history, is_private=message.is_private),
-                message.text,
+                current_text,
                 event.get_self_id(),
                 include_timestamp=bool(getattr(plugin, "include_timestamp", True)),
                 include_sender_info=bool(getattr(plugin, "include_sender_info", True)),
             )
         except Exception:
-            return message.text
+            return current_text
 
 
 def build_history(

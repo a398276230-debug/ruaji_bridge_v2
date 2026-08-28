@@ -31,6 +31,10 @@ class InboundMessage:
     user_id: str = ""
     user_name: str = ""
     text: str = ""
+    #: 模型正文：CQ 码已由桥接转成 "@昵称" 的可读文本。语义上与 text 的区别：
+    #: text 是去 CQ 纯文本（指令匹配用），content 保留 @ 信息（上下文/滑窗用）。
+    #: 桥接未升级只发 text 时，from_payload 会把两者置成同一个值。
+    content: str = ""
     self_id: str = ""
     is_private: bool = False
     at_bot: bool = False
@@ -66,9 +70,12 @@ class InboundMessage:
                     return bool(value)
             return False
 
-        text = payload.get("text")
+        text = payload.get("content") or payload.get("text")
         if text is None:
             text = payload.get("message") or payload.get("raw_message") or ""
+
+        # content 缺失（旧版桥接只发 text）时与 text 同值，保底不丢 @ 信息。
+        content = str(payload.get("content") or text or "")
 
         return cls(
             message_id=sid("messageId", "message_id"),
@@ -83,6 +90,7 @@ class InboundMessage:
                 or ""
             ),
             text=str(text),
+            content=content,
             self_id=sid("selfId", "self_id", "robotId", "robot_id"),
             is_private=sbool("isPrivate", "is_private", "private"),
             at_bot=sbool("isAtBot", "is_at_bot", "atBot", "at_bot"),

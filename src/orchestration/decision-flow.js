@@ -129,6 +129,10 @@ export class DecisionFlow {
       selfId: inbound.selfId,
       displayName: inbound.sender.displayName,
       text: inbound.text,
+      // content = 模型正文（CQ 码已转成 "@昵称"）。GCP 的滑窗缓存写入口
+      // （adapters/group_chat_plus_adapter._cache_ignored_message）读的就是它——
+      // 只发 text 的话，被忽略的群消息进滑窗时 @小九 就已经丢了。
+      content: inbound.content,
       rawMessage: inbound.rawMessage,
       messageType: inbound.messageType,
       wakeMode: this.config.wake.mode,

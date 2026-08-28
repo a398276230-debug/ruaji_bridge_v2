@@ -118,6 +118,9 @@ export class ContextFlow {
       selfId: inbound.selfId,
       displayName: inbound.sender.displayName,
       text: inbound.text,
+      // 与 decision-flow 同理：宿主 build_event 的 Plain 链来自 content 优先，
+      // GCP 钩子看到"@昵称 正文"而不是被洗掉 CQ 的裸文本。
+      content: inbound.content,
       rawMessage: inbound.rawMessage,
       messageType: inbound.messageType,
       atBot: inbound.flags.isAtBot,
@@ -166,11 +169,14 @@ export class ContextFlow {
   /** 把消息记入本地滑窗。裁决之前就要记，否则被忽略的消息不会进上下文。 */
   recordToWindow(inbound) {
     if (inbound.messageType !== MESSAGE_TYPES.GROUP) return;
-    if (!inbound.text) return;
+    // 用 content（"@昵称 揉揉"）而不是 text（"揉揉"）：滑窗是喂给模型的
+    // 群聊背景，@ 信息不能在记录这一步就丢掉。
+    const windowText = inbound.content || inbound.text;
+    if (!windowText) return;
     this.sessions.recordContext(inbound.sessionId, {
       messageId: inbound.messageId,
       nickname: inbound.sender.displayName,
-      text: inbound.text,
+      text: windowText,
       userId: inbound.userId,
     });
 

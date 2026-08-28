@@ -98,8 +98,11 @@ def build_event(message: InboundMessage, self_id: str = "") -> AstrMessageEvent:
     chain: list[Any] = []
     if message.at_bot:
         chain.append(At(qq=effective_self_id, name=""))
-    if message.text:
-        chain.append(Plain(text=message.text))
+    # 模型正文（content）优先：CQ 码已由桥接转成 "@昵称"，插件钩子（含 GCP
+    # 的 MessageCleaner/GCP 提取链）看到的是可读正文。text 只是它的去 @ 兜底。
+    body = message.content or message.text
+    if body:
+        chain.append(Plain(text=body))
     msg.message = chain
 
     event = AstrMessageEvent(

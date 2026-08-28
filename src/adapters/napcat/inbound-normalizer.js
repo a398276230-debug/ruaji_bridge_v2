@@ -24,6 +24,7 @@ import {
   parseCqMessage,
   parseCqParams,
   stripCqCodes,
+  cqToReadableText,
   annotateCqCodes,
   segmentsToText,
   renderAtMention,

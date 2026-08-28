@@ -100,6 +100,24 @@ export function buildAtCq(userId) {
 }
 
 /**
+ * 把 rawMessage 转成对人类、插件和模型都友好的纯文本。
+ * - 保留 @昵称 / @QQ（与 renderAtMention 规则一致）
+ * - 剥离媒体类 CQ 码（image/file/face 等替换为空白）
+ * - 保持词间空白与边界
+ */
+export function cqToReadableText(rawMessage) {
+  return String(rawMessage ?? '')
+    .replace(/\[CQ:at((?:,[^,\]]*)*)\][ \t]*/gi, (_match, paramStr) => {
+      const params = parseCqParams(paramStr);
+      const mention = renderAtMention(params);
+      return mention ? `${mention} ` : '';
+    })
+    .replace(/\[CQ:[^\]]*\]/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .trim();
+}
+
+/**
  * 剔除所有 CQ 码，得到纯文本。
  * 迁移自 bridge.js:1155 `msg.replace(/\[CQ:[^\]]*\]/g, ' ').trim()`。
  * 注意替换成空格而非空串——这是旧行为，直接影响名字呼唤正则的边界判定

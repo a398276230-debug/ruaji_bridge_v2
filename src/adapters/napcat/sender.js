@@ -13,6 +13,13 @@
  *   - 发送事务 ID 幂等（验收标准 11）：同一 txId 只会真正投递一次
  *   - sendEnabled=false 时走 dry-run，记录但不打到 NapCat（影子模式的前提）
  *   - 每条消息发完发布 message.sent 事件（成功与失败都发）
+ *
+ * 相对初版的加固：
+ *   - 每消费一条立即落盘（store.save 原子写）。原来只靠 10 秒定时器，
+ *     发送成功后 10 秒内崩溃会让重启补发已发出的消息——复读根因之二
+ *   - 毒丸防护：处理单条消息时的任何意外异常都归档该消息并继续，
+ *     绝不让队列陷入"抛错 → 重泵 → 再抛错"的热循环
+ *   - 断路器打开时睡到冷却结束（分片睡眠保持可停止），不再固定 2s 空转刷屏
  */
 
 import { CircuitBreaker } from '../../core/circuit-breaker.js';
@@ -51,15 +58,19 @@ export class Sender {
     this.queue = [];
     this.isSending = false;
     this.stopped = false;
-    this.breaker = new CircuitBreaker('napcat-send', { threshold: 3, cooldownMs: 60000 });
+    this.breaker = new CircuitBreaker('napcat-send', {
+      threshold: opts.breakerThreshold ?? 3,
+      cooldownMs: opts.breakerCooldownMs ?? 60000,
+    });
 
     /** 拟人化延迟需要的上一条状态（由 typing-delay middleware 复核，这里只做保底节流） */
     this.lastSentAt = 0;
     this.minGapMs = opts.minGapMs ?? 400;
 
     this._persistTimer = null;
-    /** dry-run 记录，影子模式与测试用 */
+    /** dry-run 记录，影子模式与测试用。环形截断，防止长跑内存无限增长 */
     this.dryRunLog = [];
+    this.maxDryRunEntries = opts.maxDryRunEntries ?? 1000;
   }
 
   start() {
@@ -92,8 +103,11 @@ export class Sender {
 
   /** 某个会话 + 某个用户是否还有未发完的消息（强一致性时序保障用） */
   hasPendingFor(sessionId, replyToUserId) {
+    // 双侧 String：队列从磁盘恢复时 replyToUserId 可能被 JSON 还原成数字
     return this.queue.some(
-      (t) => t.sessionId === sessionId && (replyToUserId == null || t.replyToUserId === String(replyToUserId)),
+      (t) =>
+        t.sessionId === sessionId &&
+        (replyToUserId == null || String(t.replyToUserId) === String(replyToUserId)),
     );
   }
 
@@ -101,57 +115,96 @@ export class Sender {
   pump() {
     if (this.isSending || this.stopped || this.queue.length === 0) return;
     this.isSending = true;
-    this._drain().finally(() => {
-      this.isSending = false;
-      if (this.queue.length && !this.stopped) setImmediate(() => this.pump());
-    });
+    this._drain()
+      .catch((err) => {
+        // _drain 已按条兜底，这里只防残余异常升级成 unhandledRejection
+        this.log.error('发送队列异常退出', { error: err?.message ?? String(err) });
+      })
+      .finally(() => {
+        this.isSending = false;
+        if (this.queue.length && !this.stopped) setImmediate(() => this.pump());
+      });
   }
 
   async _drain() {
     while (this.queue.length && !this.stopped) {
       const task = this.queue[0];
-
-      // 过旧消息不补发
-      const age = Date.now() - (task.metadata?.createdAt ?? Date.now());
-      if (age > this.config.reply.maxSendAgeMs) {
+      try {
+        const consumed = await this._processTask(task);
+        if (consumed) {
+          this.queue.shift();
+          this.health?.update('queue', { size: this.queue.length });
+          // 消费即落盘（原子写）：不等 10 秒定时器，否则窗口内崩溃会补发已发消息
+          this.store.save(this.queue);
+        }
+      } catch (err) {
+        // 毒丸防护：意外异常归档队首并继续。不这样做会变成
+        // "抛错 → finally 重泵 → 同一条再抛" 的热循环，整个队列卡死。
         this.queue.shift();
-        this.store.archive([task], '发送循环过期过滤');
-        this.health?.increment('queue', 'failed');
-        continue;
-      }
-
-      task.metadata.retry = (task.metadata.retry ?? 0) + 1;
-
-      if (task.metadata.retry > this.config.reply.maxSendRetries) {
-        this.log.warn('消息重试超限，归档并跳过', {
-          txId: task.txId,
-          retry: task.metadata.retry,
-          correlationId: task.correlationId,
+        const reason = (err?.message ?? String(err)).slice(0, 200);
+        this.log.error('处理消息时发生意外异常，已归档该消息', {
+          txId: task?.txId ?? null,
+          correlationId: task?.correlationId ?? null,
+          error: reason,
         });
-        this.queue.shift();
-        this.store.archive([task], `重试超限 (${task.metadata.retry} 次)`);
+        this.store.archive([task], `意外异常: ${reason}`);
         this.health?.increment('queue', 'failed');
         this.health?.increment('messages', 'failed');
-        await this._publishSent(task, { status: 'failed', error: '重试超限' });
-        continue;
+        await this._publishSent(task, { status: 'failed', error: '处理异常' });
+        this.store.save(this.queue);
       }
-
-      if (task.metadata.retry > 1) {
-        await sleep(retryDelayMs(task.metadata.retry));
-      }
-
-      // 保底节流：拟人化延迟由 middleware 负责，这里只防止贴脸连发
-      const gap = this.minGapMs - (Date.now() - this.lastSentAt);
-      if (gap > 0) await sleep(gap);
-
-      const outcome = await this._deliver(task);
-      if (outcome.done) {
-        this.queue.shift();
-        this.health?.update('queue', { size: this.queue.length });
-      }
-      // outcome.done=false 时保留在队首，下一轮重试
     }
     this.store.save(this.queue);
+  }
+
+  /**
+   * 处理队首消息。
+   * @returns {Promise<boolean>} true = 已消费（应出队），false = 保留队首待重试
+   */
+  async _processTask(task) {
+    if (!task.metadata) task.metadata = {};
+
+    // 过旧消息不补发。缺 createdAt 的按过旧处理——与 send-queue-store.load
+    // 的保守策略一致（宁可少发，不可复读）
+    const createdAt = task.metadata.createdAt;
+    const age = createdAt ? Date.now() - createdAt : Infinity;
+    if (age > this.config.reply.maxSendAgeMs) {
+      this.log.warn('消息过旧，归档不补发', {
+        txId: task.txId,
+        correlationId: task.correlationId,
+        ageMs: Number.isFinite(age) ? age : null,
+      });
+      this.store.archive([task], '发送循环过期过滤');
+      this.health?.increment('queue', 'failed');
+      this.health?.increment('messages', 'failed');
+      await this._publishSent(task, { status: 'failed', error: '消息过旧未发送' });
+      return true;
+    }
+
+    task.metadata.retry = (task.metadata.retry ?? 0) + 1;
+
+    if (task.metadata.retry > this.config.reply.maxSendRetries) {
+      this.log.warn('消息重试超限，归档并跳过', {
+        txId: task.txId,
+        retry: task.metadata.retry,
+        correlationId: task.correlationId,
+      });
+      this.store.archive([task], `重试超限 (${task.metadata.retry} 次)`);
+      this.health?.increment('queue', 'failed');
+      this.health?.increment('messages', 'failed');
+      await this._publishSent(task, { status: 'failed', error: '重试超限' });
+      return true;
+    }
+
+    if (task.metadata.retry > 1) {
+      await sleep(retryDelayMs(task.metadata.retry));
+    }
+
+    // 保底节流：拟人化延迟由 middleware 负责，这里只防止贴脸连发
+    const gap = this.minGapMs - (Date.now() - this.lastSentAt);
+    if (gap > 0) await sleep(gap);
+
+    return (await this._deliver(task)).done;
   }
 
   async _deliver(task) {
@@ -173,6 +226,7 @@ export class Sender {
 
     if (!this.config.reply.sendEnabled) {
       // 影子/测试模式：走完整链路但不真正投递
+      if (this.dryRunLog.length >= this.maxDryRunEntries) this.dryRunLog.shift();
       this.dryRunLog.push({
         txId: task.txId,
         correlationId: task.correlationId,
@@ -223,9 +277,19 @@ export class Sender {
       if (err instanceof CircuitOpenError) {
         // 主动拦截：既不算失败也不消费重试次数
         task.metadata.retry -= 1;
-        this.log.warn('NapCat 断路器打开，发送暂缓', { txId: task.txId });
+        this.log.warn('NapCat 断路器打开，发送暂缓', {
+          txId: task.txId,
+          nextRetryAt: new Date(err.nextRetryAt).toISOString(),
+        });
         this.idempotency.release(idemKey);
-        await sleep(2000);
+        // 睡到冷却结束（分片睡眠保持可停止），而不是固定 2s 空转——
+        // 60s 冷却里固定睡 2s 会空转 30 轮并刷 30 条重复警告。
+        // 注意：这里不碰 breaker.canAttempt()，那个调用会把状态翻成
+        // HALF_OPEN 并消费掉唯一一次探测资格，必须留给真正的 _deliver。
+        const waitUntil = err.nextRetryAt ?? Date.now() + 2000;
+        while (!this.stopped && Date.now() < waitUntil) {
+          await sleep(Math.min(500, Math.max(waitUntil - Date.now(), 50)));
+        }
         return { done: false };
       }
 
@@ -248,28 +312,37 @@ export class Sender {
 
   async _publishSent(task, result) {
     if (!this.eventBus) return;
-    const isGroup = task.target?.type === 'group';
-    const groupId = isGroup ? task.target?.id : null;
-    const userId = isGroup ? (task.replyToUserId ?? null) : task.target?.id;
-    this.eventBus.publish(
-      createEvent(EVENTS.MESSAGE_SENT, {
-        correlationId: task.correlationId,
-        sessionId: task.sessionId,
-        payload: {
-          messageId: task.txId,
-          txId: task.txId,
-          target: task.target,
-          text: task.text ?? '',
-          groupId,
-          userId,
-          messageType: task.target?.type ?? (isGroup ? 'group' : 'private'),
-          status: result.status,
-          replyId: result.replyId ?? null,
-          error: result.error ?? null,
-          latencyMs: result.latencyMs ?? 0,
-        },
-      }),
-    );
+    // 事件问题绝不能反过来影响队列判定：_deliver 成功路径也调它，
+    // 一旦抛错会把"已送达"误判成失败并重发。这里整体兜底。
+    try {
+      const isGroup = task.target?.type === 'group';
+      const groupId = isGroup ? task.target?.id : null;
+      const userId = isGroup ? (task.replyToUserId ?? null) : task.target?.id;
+      this.eventBus.publish(
+        createEvent(EVENTS.MESSAGE_SENT, {
+          correlationId: task.correlationId,
+          sessionId: task.sessionId,
+          payload: {
+            messageId: task.txId,
+            txId: task.txId,
+            target: task.target,
+            text: task.text ?? '',
+            groupId,
+            userId,
+            messageType: task.target?.type ?? (isGroup ? 'group' : 'private'),
+            status: result.status,
+            replyId: result.replyId ?? null,
+            error: result.error ?? null,
+            latencyMs: result.latencyMs ?? 0,
+          },
+        }),
+      );
+    } catch (err) {
+      this.log.error('message.sent 事件发布失败', {
+        txId: task?.txId ?? null,
+        error: err?.message ?? String(err),
+      });
+    }
   }
 
   getStatus() {
