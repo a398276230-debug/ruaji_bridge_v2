@@ -49,6 +49,7 @@ docs/
 Thumbs.db
 Desktop.ini
 .idea/
+.kilo/
 .vscode/
 *.sublime-project
 *.sublime-workspace

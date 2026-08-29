@@ -178,12 +178,19 @@ export class DecisionFlow {
    * 并发控制与打断特权（附录 1）。
    *
    * 群互斥锁按 executionKey（= 会话维度）。在途生成期间：
-   *   - 普通群友的新消息只入缓冲队列排队，不打断
    *   - ruaji 的新消息拥有最高优先级：立即 abort 在途生成并插话
+   *   - 主动插话（auto）且没有真 @：直接丢弃，不排队（P2，与 handleProactive 的 busy 行为一致）
+   *   - 其余群友的新消息只入缓冲队列排队，不打断
    *
-   * @returns {{ action: 'start'|'preempt'|'queue' }}
+   * 丢弃判定放在这里而不是 InboundFlow：仲裁的三条分支必须在同一处决定，
+   * 否则外面二次否决会先打出一条"进入排队缓冲"再打一条"放弃本次"，运维看日志
+   * 会误判成积压。
+   *
+   * @param {object} inbound
+   * @param {{ route?: string }|null} [decision] 本条消息的裁决结果。不传等于旧行为（永不 drop）。
+   * @returns {{ action: 'start'|'preempt'|'queue'|'drop' }}
    */
-  arbitrateConcurrency(inbound) {
+  arbitrateConcurrency(inbound, decision = null) {
     const key = inbound.executionKey;
     if (!this.sessions.isBusy(key)) return { action: 'start' };
 
@@ -200,6 +207,17 @@ export class DecisionFlow {
         preempted,
       });
       return { action: 'preempt' };
+    }
+
+    // 真 @ 例外与上面的 at_overrides_provider_ignore 是同一个不变量：被点名还不理人
+    // 不可接受，即使裁决者把这条标成了 auto，也要排队等下一轮，不能静默丢。
+    if (decision?.route === ROUTES.AUTO && !inbound.flags.isAtBot) {
+      this.log.info('主动插话遇到在途生成，放弃本次', {
+        correlationId: inbound.correlationId,
+        executionKey: key,
+        userId: inbound.userId,
+      });
+      return { action: 'drop' };
     }
 
     this.log.info('该会话已有在途生成，本条消息进入排队缓冲', {

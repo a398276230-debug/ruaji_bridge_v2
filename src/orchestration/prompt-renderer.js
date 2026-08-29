@@ -148,14 +148,35 @@ export function renderSystemText({ inbound, contextBlocks, triggerType, affectio
  */
 export function renderUserContent({ inbound, contextBlocks, identity }) {
   const slots = groupBySlot(contextBlocks);
-  const isOwner = String(inbound.userId) === String(identity.ownerId);
+  const batch = inbound.extensions?.batch;
 
-  const timeStr = formatMsgTime(inbound.timestamp);
-  const who = isOwner
-    ? `【${inbound.sender.displayName || 'ruaji'}】`
-    : `【${inbound.sender.displayName} (ID: ${inbound.userId})】`;
+  let stamped = null;
+  if (Array.isArray(batch) && batch.length > 1) {
+    // 防抖合并批次：一行一条、各标各的名（P1）。逐条按该条 userId 判定主人短格式，
+    // 与单条路径的格式规则一致。空正文（纯媒体消息）不占行——与 mergeBatch 拼
+    // content 时的 filter(Boolean) 同口径，也顺手滤掉手搓 batch 里的非对象项。
+    const lines = batch
+      .filter((item) => item && String(item.content ?? '').trim())
+      .map((item) => {
+        const itemOwner = String(item.userId) === String(identity.ownerId);
+        const who = itemOwner
+          ? `【${item.displayName || 'ruaji'}】`
+          : `【${item.displayName} (ID: ${item.userId})】`;
+        return `[时间:${formatMsgTime(item.timestamp)}] ${who}${item.content}`;
+      });
+    if (lines.length > 0) stamped = lines.join('\n');
+  }
 
-  let stamped = `[时间:${timeStr}] ${who}${inbound.content}`;
+  if (stamped === null) {
+    // 单条，或整批都没有正文（纯媒体批次）：退回末条身份的单行格式
+    const isOwner = String(inbound.userId) === String(identity.ownerId);
+    const timeStr = formatMsgTime(inbound.timestamp);
+    const who = isOwner
+      ? `【${inbound.sender.displayName || 'ruaji'}】`
+      : `【${inbound.sender.displayName} (ID: ${inbound.userId})】`;
+
+    stamped = `[时间:${timeStr}] ${who}${inbound.content}`;
+  }
 
   if (inbound.messageType === MESSAGE_TYPES.GROUP && slots.recent) {
     stamped = `[最近群聊消息]\n${slots.recent}\n\n${stamped}`;

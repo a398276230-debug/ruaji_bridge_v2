@@ -84,6 +84,14 @@ export function createInboundMessage(input = {}) {
     /** 本地落盘媒体：{ kind, localPath, url, mime, name, sizeBytes } */
     media: Array.isArray(input.media) ? input.media : [],
 
+    /**
+     * 自由扩展位。napcat 原始事件元数据固定在 extensions.napcat。
+     * 已登记的可选键：
+     *   proactive  外部触发的主动接话（inbound-flow.handleProactive）
+     *   batch      防抖合并批次的逐条身份，由 mergeBatch 写入：
+     *              [{ messageId, timestamp, userId, displayName, content }]
+     *              渲染层据此一行一条各标各的名，滑窗据此整批排除（P1）
+     */
     extensions: {
       napcat: input.extensions?.napcat ?? {},
       ...(input.extensions || {}),

@@ -67,7 +67,12 @@ export class ContextFlow {
       priority: 60,
       collect: (input) => {
         if (input.messageType !== MESSAGE_TYPES.GROUP) return [];
-        const excludeId = input.inbound?.messageId ?? input.messageId;
+        // 防抖合并批次要整批排除：每条都已入窗，只排最后一条会让先到的消息
+        // 在 [最近群聊消息] 里出现两遍（P1 联动）
+        const batch = input.inbound?.extensions?.batch;
+        const excludeId = Array.isArray(batch)
+          ? batch.map((item) => item.messageId)
+          : (input.inbound?.messageId ?? input.messageId);
         const text = this.sessions.renderContext(input.sessionId, this.config.decision.localWindowInject, excludeId);
         if (!text) return [];
         return [
@@ -127,7 +132,12 @@ export class ContextFlow {
       isAtBot: inbound.flags.isAtBot,
       isOwner: inbound.flags.isOwner,
       triggerType: ctx.triggerType,
-      /** 仅本地 provider 可见的完整对象，HTTP provider 走模板取不到它 */
+      /**
+       * 完整 inbound 对象。本地 provider 直接读它（local-window 取 extensions.batch、
+       * local-media 取 media）。注意 HTTP provider 并不是拿不到它：manifest 没声明
+       * body 模板时，plugin-registry 会把整个 input 原样 POST 出去（plugin-registry.js:119），
+       * 只有声明了模板才只发模板挑中的字段。
+       */
       inbound,
     };
 

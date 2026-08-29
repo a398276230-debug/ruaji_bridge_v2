@@ -50,11 +50,18 @@ export class SessionStore {
     while (window.length > this.windowSize) window.shift();
   }
 
-  /** 取最近 N 条历史消息（排除当前正在处理的消息） */
+  /**
+   * 取最近 N 条历史消息（排除当前正在处理的消息）。
+   * 第三参支持单个 messageId（旧用法）或整批 messageId 数组——
+   * 防抖合并批次里每条都已入窗，只排最后一条会让先到的消息出现两遍（P1 联动）。
+   */
   renderContext(sessionId, count, excludeMessageId = null) {
     let window = this.contextWindows.get(sessionId) ?? [];
     if (excludeMessageId) {
-      window = window.filter((m) => m.messageId !== excludeMessageId);
+      const exclude = new Set(
+        (Array.isArray(excludeMessageId) ? excludeMessageId : [excludeMessageId]).map(String),
+      );
+      window = window.filter((m) => !exclude.has(String(m.messageId)));
     }
     return window
       .slice(-count)
@@ -161,6 +168,17 @@ export class SessionStore {
     const items = buf.pending;
     buf.pending = [];
     return items;
+  }
+
+  /**
+   * 把 drain 出来但本轮不处理的消息按原序放回队首。
+   * 放回队首而不是队尾：drain 之后可能已经有新消息 push 进来，
+   * 挂到队尾会让先到的消息排在后到的后面。
+   */
+  requeue(executionKey, items) {
+    if (!items?.length) return;
+    const buf = this.getBuffer(executionKey);
+    buf.pending.unshift(...items);
   }
 
   clearAllTimers() {

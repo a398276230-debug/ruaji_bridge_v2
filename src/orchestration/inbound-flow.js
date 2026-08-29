@@ -9,8 +9,8 @@
  *   4. publish message.received  与是否回复无关，广播型，不阻塞
  *   5. 命令拦截         命令不发给模型
  *   6. 裁决             direct / auto / ignore
- *   7. 并发仲裁         主人打断 / 群友排队（附录 1）
- *   8. 防抖合并         800ms 内的多条消息并成一次生成
+ *   7. 并发仲裁         主人打断 / 群友排队（附录 1）；无 @ 的 auto 插话遇在途直接丢弃（P2）
+ *   8. 防抖合并         800ms 内的多条消息并成一次生成；只合并同一个人（P1）
  *   9. 上下文聚合 → 生成 → 转换 → 发送
  *
  * 第 4 步的位置是关键：旧 Bridge 把 LivingMemory 广播放在所有 return 之前
@@ -189,7 +189,14 @@ export class InboundFlow {
       return;
     }
 
-    const arbitration = this.decisionFlow.arbitrateConcurrency(inbound);
+    const arbitration = this.decisionFlow.arbitrateConcurrency(inbound, decision);
+    if (arbitration.action === 'drop') {
+      // 主动插话遇到在途生成：统一丢弃，不排队（P2，与 handleProactive 的 busy 行为一致）。
+      // 消息已进本地滑窗（recordToWindow 在裁决前无条件执行），上下文不丢。
+      // 与 route=ignore 同样记 ignored，否则这条只计 received、任何桶都不落账。
+      this.health?.increment('messages', 'ignored');
+      return;
+    }
     if (arbitration.action === 'queue') {
       this._buffer(inbound, decision);
       return;
@@ -251,10 +258,22 @@ export class InboundFlow {
   }
 
   async _runGeneration(executionKey) {
-    const batch = this.sessions.drainBuffer(executionKey);
-    if (batch.length === 0) return;
+    const pending = this.sessions.drainBuffer(executionKey);
+    if (pending.length === 0) return;
 
-    // 合并：内容按换行拼接，其余字段取最后一条（最新的那条决定裁决与身份）
+    // 只合并同一个人的消息，其余人原序退回队列等下一轮（P1）
+    const { batch, rest } = splitBySpeaker(pending);
+    if (rest.length > 0) {
+      this.sessions.requeue(executionKey, rest);
+      this.log.info('排队批次按发言人切分，其余人留待下一轮', {
+        executionKey,
+        replyingTo: batch[0].inbound.userId,
+        merged: batch.length,
+        requeued: rest.length,
+      });
+    }
+
+    // 合并：内容按换行拼接，身份字段取最后一条，裁决取批次里最强的一条
     const merged = mergeBatch(batch);
     const { inbound, decision } = merged;
 
@@ -358,7 +377,42 @@ export class InboundFlow {
   }
 }
 
-/** 合并一批防抖消息：内容换行拼接，元数据取最新一条 */
+/**
+ * 从排队缓冲里切出本轮要合并的一组：**只合并同一个人的消息**。
+ *
+ * 不同人的话绝不合并（P1）。合并后只剩一个身份，而"@ 回谁"（replyToUserId）与
+ * "扣谁的好感"（affection 中间件读 inbound.userId）都只认这一个身份——两个群友的话
+ * 挂在一个人名下，回复也只 @ 得到其中一个，另一个等于被无视。
+ *
+ * 锚定谁：队列里有主人就先答主人，否则按 FIFO 取第一条的作者。前者是为了不让
+ * 打断特权（附录 1）被队列里先到的群友挤掉——主人刚 abort 掉在途生成，结果这一轮
+ * 回的是别人，特权就白给了。
+ *
+ * 锚定用户的消息一次答完，其余人原序留在队列里，由 _runGeneration 的 finally
+ * 重新调度下一轮。每轮至少清掉一个人，不会饿死。
+ *
+ * @param {{ inbound: object, decision: object }[]} pending
+ * @returns {{ batch: object[], rest: object[] }}
+ */
+export function splitBySpeaker(pending) {
+  const anchorItem = pending.find((p) => p.inbound.flags?.isOwner) ?? pending[0];
+  const anchorUserId = String(anchorItem.inbound.userId);
+
+  const batch = [];
+  const rest = [];
+  for (const item of pending) {
+    if (String(item.inbound.userId) === anchorUserId) batch.push(item);
+    else rest.push(item);
+  }
+  return { batch, rest };
+}
+
+/**
+ * 合并一批防抖消息：内容换行拼接，身份字段取最新一条，裁决取最强一条。
+ * 调用方保证批次内是同一个人（splitBySpeaker）。extensions.batch 仍逐条保留
+ * messageId/时间/身份/正文——渲染层据此一行一条，时间戳不会被末条统一顶掉，
+ * 万一将来又有人把跨用户合并接回来，逐条标名也能兜住（P1）。
+ */
 export function mergeBatch(batch) {
   const last = batch.at(-1);
   if (batch.length === 1) return last;
@@ -368,6 +422,21 @@ export function mergeBatch(batch) {
     content: batch.map((b) => b.inbound.content).filter(Boolean).join('\n'),
     text: batch.map((b) => b.inbound.text).filter(Boolean).join('\n'),
     media: batch.flatMap((b) => b.inbound.media ?? []),
+    extensions: {
+      ...last.inbound.extensions,
+      batch: batch.map((b) => ({
+        messageId: b.inbound.messageId,
+        timestamp: b.inbound.timestamp,
+        userId: b.inbound.userId,
+        displayName: b.inbound.sender?.displayName ?? '',
+        content: b.inbound.content,
+      })),
+    },
   };
-  return { inbound: merged, decision: last.decision };
+
+  // 裁决取批次里最强的一条（direct > auto），不是无脑取最后一条：@ 消息与 auto
+  // 插话落在同一个防抖窗口时，末条通吃会把被 @ 的人当成"主动插话"来回复——
+  // 不 @ 回、不评好感、systemText 走主人同款分支。同强度取较新的那条。
+  const strongest = batch.filter((b) => b.decision?.route === ROUTES.DIRECT).at(-1) ?? last;
+  return { inbound: merged, decision: strongest.decision };
 }
