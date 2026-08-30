@@ -22,8 +22,13 @@ export const TRIGGER_NOTICES = Object.freeze({
   [TRIGGER_TYPES.KEYWORD]:
     '\n[交互情境: 提及名字] 注意，群友对话中提到了你的名字/相关信息，请先结合上下文判断是在跟你说话还是在聊关于你的事，自然参与。',
   [TRIGGER_TYPES.AT]:
-    '\n[交互情境: 直接@呼唤] 注意，现在群友在直接@你并向你发问/对话，请正面互动。',
+    '\n[交互情境: 直接@呼唤] 注意，现在群友在直接@你并向你发问/对话，请优先与@你的群友正面互动。',
 });
+
+/** QQ 原生工具能力自白（onebot-tools.js 经 unified_host_mcp.mjs 以 MCP 广播给 Hermes） */
+export const QQ_TOOLS_NOTICE = Object.freeze(
+  '\n[QQ工具: 你能直接调用QQ原生工具——翻群聊/私聊历史、解包合并转发、查群资料与成员、群文件、取图片与文件、语音转文字、戳一戳、转发消息、AI语音条。群友提到你没看到的图、文件或之前的聊天内容时，直接调工具查证，不要装作看过。]',
+);
 
 /**
  * 消息时间格式化（bridge.js:252-275）。
@@ -106,7 +111,7 @@ export function renderSystemText({ inbound, contextBlocks, triggerType, affectio
   // 分支 1/2：主人，以及主动接话。
   // 主动接话本身不构成与任何群友的互动，不注入也不评估好感度。
   if (isOwner || isProactive) {
-    return `${slots.voice}${memePart}${slangPart}${extraPart}${triggerNotice}${sessionEnv}${knowledgeNotice}`;
+    return `${slots.voice}${memePart}${slangPart}${extraPart}${triggerNotice}${sessionEnv}${knowledgeNotice}${QQ_TOOLS_NOTICE}`;
   }
 
   // 分支 3：普通群友/私聊对象
@@ -133,7 +138,7 @@ export function renderSystemText({ inbound, contextBlocks, triggerType, affectio
     }
   }
 
-  return `${header}${affLine}${memePart}${slangPart}${extraPart}${triggerNotice}${sessionEnv}${knowledgeNotice}`;
+  return `${header}${affLine}${memePart}${slangPart}${extraPart}${triggerNotice}${sessionEnv}${knowledgeNotice}${QQ_TOOLS_NOTICE}`;
 }
 
 /**
