@@ -80,6 +80,16 @@ export function groupBySlot(blocks) {
 }
 
 /**
+ * 好感度评估标记规则：格式锚点 + 量纲 + 标准，只随 affLine 注入（即只在真正
+ * 评估好感度的分支出现）。原来写在 SOUL.md 的 <affection_eval> 整块指令
+ * 并入此处——SOUL.md 版本是常驻 voice 槽，主人/主动接话时也会要求带标记，
+ * 与"主人不评估、主动接话不评估"的分支语义相反；量纲与评分标准则只有这里有。
+ */
+export const AFF_MARKER_RULE = Object.freeze(
+  '另起一行末尾附 [AFF:±N|理由]（N取-5~+5，凭真实感受：走心交流+3~5、友好闲聊+1~2、纯水消息0、敷衍冷淡-1~2、冒犯攻击-3~5；无聊对话就给0，不必每次都加分；理由≤15字）',
+);
+
+/**
  * 渲染 systemText（隐式注入，独立的 system 角色，不污染用户消息正文）。
  *
  * @param {object} input
@@ -126,15 +136,15 @@ export function renderSystemText({ inbound, contextBlocks, triggerType, affectio
     const portrayalStr = affectionContext.portrayal ? `\n[${affectionContext.portrayal}]` : '';
 
     if (affectionContext.isColdViolent) {
-      affLine = `\n[好感: ${affectionContext.affection}/90 (${affectionContext.level})${relStr} | 状态: ❄️冷暴力惩罚中(剩余${affectionContext.coldRemainingMinutes}分)，态度需极度冷淡疏离、极简敷衍，严禁热心迎合 | 另起一行末尾附 [AFF:±N|理由]]${portrayalStr}`;
+      affLine = `\n[好感: ${affectionContext.affection}/90 (${affectionContext.level})${relStr} | 状态: ❄️冷暴力惩罚中(剩余${affectionContext.coldRemainingMinutes}分)，态度需极度冷淡疏离、极简敷衍，严禁热心迎合 | ${AFF_MARKER_RULE}]${portrayalStr}`;
     } else if (affectionContext.atMin) {
-      affLine = `\n[好感: ${affectionContext.affection}/90 (${affectionContext.level})${relStr} | 当前好感已达下限-100，无法继续扣分 | 另起一行末尾附 [AFF:±N|理由]]${portrayalStr}`;
+      affLine = `\n[好感: ${affectionContext.affection}/90 (${affectionContext.level})${relStr} | 当前好感已达下限-100，无法继续扣分 | ${AFF_MARKER_RULE}]${portrayalStr}`;
     } else if (affectionContext.affection < 0) {
-      affLine = `\n[好感: ${affectionContext.affection}/90 (${affectionContext.level})${relStr} | 状态: 负好感警戒区，态度需戒备、冷漠或带刺，拒绝亲密互动 | 另起一行末尾附 [AFF:±N|理由]]${portrayalStr}`;
+      affLine = `\n[好感: ${affectionContext.affection}/90 (${affectionContext.level})${relStr} | 状态: 负好感警戒区，态度需戒备、冷漠或带刺，拒绝亲密互动 | ${AFF_MARKER_RULE}]${portrayalStr}`;
     } else if (affectionContext.atMax) {
-      affLine = `\n[好感: ${affectionContext.affection}/90 (${affectionContext.level})${relStr} | 当前好感已达上限90，禁止输出正向加分，仅允许[AFF:0|...]持平或负向扣分 | 另起一行末尾附 [AFF:±N|理由]]${portrayalStr}`;
+      affLine = `\n[好感: ${affectionContext.affection}/90 (${affectionContext.level})${relStr} | 当前好感已达上限90，禁止输出正向加分，仅允许[AFF:0|...]持平或负向扣分 | ${AFF_MARKER_RULE}]${portrayalStr}`;
     } else {
-      affLine = `\n[好感: ${affectionContext.affection}/90 (${affectionContext.level})${relStr} | 另起一行末尾附 [AFF:±N|理由]]${portrayalStr}`;
+      affLine = `\n[好感: ${affectionContext.affection}/90 (${affectionContext.level})${relStr} | ${AFF_MARKER_RULE}]${portrayalStr}`;
     }
   }
 
