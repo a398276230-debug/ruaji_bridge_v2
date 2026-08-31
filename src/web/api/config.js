@@ -56,6 +56,7 @@ export function createConfigApi(deps) {
           ownerId: config.identity?.ownerId ?? '',
           robotId: config.identity?.robotId ?? '',
           botName: config.identity?.botName ?? '瑞姬',
+          ownerTitle: config.identity?.ownerTitle ?? '主人',
           rateLimitUsers: Array.isArray(config.identity?.rateLimitUsers)
             ? [...config.identity.rateLimitUsers]
             : [],
@@ -267,6 +268,11 @@ export function createConfigApi(deps) {
           ownerId: String(updates.identity.ownerId).trim(),
           robotId: String(updates.identity.robotId).trim(),
           botName: String(updates.identity.botName).trim(),
+          // 称呼可留空：留空即回落默认「主人」，不是清掉
+          ownerTitle:
+            updates.identity.ownerTitle !== undefined
+              ? (String(updates.identity.ownerTitle).trim().slice(0, 30) || '主人')
+              : (diskConfig.identity?.ownerTitle || '主人'),
           rateLimitUsers: Array.isArray(updates.identity.rateLimitUsers)
             ? updates.identity.rateLimitUsers.map((u) => String(u).trim()).filter(Boolean)
             : (diskConfig.identity?.rateLimitUsers || []),

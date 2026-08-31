@@ -5,6 +5,7 @@
     "ownerId": "10000001",
     "robotId": "11111111",
     "botName": "BOT_NAME",
+    "ownerTitle": "主人",
     "rateLimitUsers": ["10000002"],
     "privateWhitelist": ["10000001", "10000003"]
   },

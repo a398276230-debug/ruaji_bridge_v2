@@ -14,7 +14,7 @@ import { ConfigError } from '../contracts/errors.js';
 
 const DEFAULTS = {
   mode: 'live',
-  identity: { ownerId: '', robotId: '', botName: '瑞姬', rateLimitUsers: [], privateWhitelist: [] },
+  identity: { ownerId: '', robotId: '', botName: '瑞姬', ownerTitle: '主人', rateLimitUsers: [], privateWhitelist: [] },
   napcat: {
     wsUrl: 'ws://127.0.0.1:3001',
     httpUrl: 'http://127.0.0.1:3000',

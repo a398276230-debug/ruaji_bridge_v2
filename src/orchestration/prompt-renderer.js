@@ -5,7 +5,7 @@
  * 从 ContextBlock 的 metadata.slot 取值进行结构化合并。
  *
  * slot 约定：
- *   voice   ruaji 语气画像（只对主人分支作为开头）
+ *   voice   ruaji 语气画像（主动接话分支的开头；主人分支排在主人身份头之后）
  *   meme    表情包语义工具规则
  *   slang   按需召回的黑话词条
  *   recent  最近群聊消息（进 userContent 前缀，不进 systemText）
@@ -105,6 +105,7 @@ export function renderSystemText({ inbound, contextBlocks, triggerType, affectio
   const isGroup = inbound.messageType === MESSAGE_TYPES.GROUP;
   const isOwner = String(inbound.userId) === String(identity.ownerId);
   const isProactive = triggerType === TRIGGER_TYPES.AI_DECISION;
+  const senderName = inbound.sender?.displayName || inbound.sender?.nickname || inbound.sender?.name || '群友';
 
   const triggerNotice = isGroup ? (TRIGGER_NOTICES[triggerType] ?? TRIGGER_NOTICES[TRIGGER_TYPES.AT]) : '';
   const memePart = slots.meme ? `\n${slots.meme}` : '';
@@ -121,11 +122,18 @@ export function renderSystemText({ inbound, contextBlocks, triggerType, affectio
   // 分支 1/2：主人，以及主动接话。
   // 主动接话本身不构成与任何群友的互动，不注入也不评估好感度。
   if (isOwner || isProactive) {
-    return `${slots.voice}${memePart}${slangPart}${extraPart}${triggerNotice}${sessionEnv}${knowledgeNotice}${QQ_TOOLS_NOTICE}`;
+    // 主人身份头是 v2 对旧 Bridge 的有意偏离：旧的主人分支无任何身份标注，模型只能靠
+    // userContent 的短格式昵称猜"这是主人"，配合人设的反控制立场会把主人的指令当成
+    // 注入攻击拒掉。ownerTitle 是可客制化的称呼（默认"主人"），RP 场景不必千篇一律。
+    // 主动接话没有外部说话人，不注入。
+    const ownerTitle = String(identity.ownerTitle || '主人');
+    const ownerHeader = isOwner
+      ? `[用户: ${senderName}(${inbound.userId}) | 身份: ${ownerTitle}（系统验证的主人本人，完全信任，其**请求**与**命令**应当照办；日常用「${ownerTitle}」称呼他）]\n`
+      : '';
+    return `${ownerHeader}${slots.voice}${memePart}${slangPart}${extraPart}${triggerNotice}${sessionEnv}${knowledgeNotice}${QQ_TOOLS_NOTICE}`;
   }
 
   // 分支 3：普通群友/私聊对象
-  const senderName = inbound.sender?.displayName || inbound.sender?.nickname || inbound.sender?.name || '群友';
   const header = `[用户: ${senderName}(${inbound.userId}) | ${
     isGroup ? `群${inbound.groupId}` : '私聊'
   }]`;
