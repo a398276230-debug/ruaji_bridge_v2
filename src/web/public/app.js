@@ -855,6 +855,116 @@ async function testMemeTag() {
   }
 }
 
+// ============================================================ 社区梗库
+
+let editingSlangId = null;
+
+const splitList = (raw, sep = /[,，]/) => String(raw || '').split(sep).map((s) => s.trim()).filter(Boolean);
+
+async function renderSlang() {
+  const q = $('#slang-q').value.trim().toLowerCase();
+  const d = await api('/api/host/memes');
+  if (d.ok === false) {
+    $('#slang-hint').textContent = '';
+    $('#slang-grid').innerHTML = `<p class="empty">${esc(d.error || '统一宿主未启动，梗库不可用')}</p>`;
+    return;
+  }
+
+  const all = d.memes || [];
+  // 过滤在前端做：整库就几十条，一次拉全比每敲一个字打一次宿主便宜
+  const items = q
+    ? all.filter((m) => `${m.term} ${(m.aliases || []).join(' ')} ${m.meaning} ${(m.tags || []).join(' ')}`
+        .toLowerCase().includes(q))
+    : all;
+  $('#slang-hint').textContent = `${items.length} / ${all.length} 条`;
+
+  $('#slang-grid').innerHTML = items.length
+    ? items.map((m) => `
+        <div class="meme-card">
+          <div class="meme-body">
+            <div class="meme-header">
+              <div class="meme-tag" title="${esc(m.term)}">${esc(m.term)}</div>
+              ${m.has_vector ? '' : '<span class="meme-cat-badge" title="这条梗还没有向量，梗雷达暂时不会提示它。宿主重启会自动补算，或再保存一次">⚠ 未向量化</span>'}
+            </div>
+            ${(m.aliases || []).length ? `<div class="meme-kw" title="${esc(m.aliases.join(' / '))}">别名：${esc(m.aliases.join(' / '))}</div>` : ''}
+            <div class="meme-desc" title="${esc(m.meaning)}">${esc(m.meaning)}</div>
+            ${m.origin ? `<div class="meme-kw" title="${esc(m.origin)}">出处：${esc(m.origin)}</div>` : ''}
+            <div class="meme-actions">
+              <button class="btn btn-sm ghost btn-slang-edit" data-id="${m.id}" title="编辑梗名、别名、含义与例句">✏️ 编辑</button>
+              <button class="btn btn-sm ghost btn-del btn-slang-del" data-id="${m.id}" title="从梗库中删除">🗑️</button>
+            </div>
+          </div>
+        </div>`).join('')
+    : '<p class="empty">梗库为空，或过滤条件没有命中任何条目</p>';
+
+  $$('#slang-grid .btn-slang-edit').forEach((btn) => {
+    btn.onclick = () => openSlangEditor(items.find((x) => String(x.id) === btn.dataset.id));
+  });
+
+  $$('#slang-grid .btn-slang-del').forEach((btn) => {
+    btn.onclick = async () => {
+      const meme = items.find((x) => String(x.id) === btn.dataset.id);
+      if (!meme || !confirm(`确定要从梗库中删除「${meme.term}」吗？`)) return;
+      try {
+        const res = await api('/api/host/memes/delete', { method: 'POST', body: { id: meme.id } });
+        if (res.ok) { toast('🗑️ 已从梗库删除'); renderSlang(); }
+        else toast(`删除失败：${res.error || '未知错误'}`, true);
+      } catch (e) { toast(`删除异常：${e.message}`, true); }
+    };
+  });
+}
+
+function openSlangEditor(meme) {
+  editingSlangId = meme?.id ?? null;
+  $('#slang-edit-title').textContent = meme ? '✏️ 编辑社区梗' : '＋ 新增社区梗';
+  $('#slang-edit-term').value = meme?.term ?? '';
+  $('#slang-edit-aliases').value = (meme?.aliases || []).join(', ');
+  $('#slang-edit-meaning').value = meme?.meaning ?? '';
+  $('#slang-edit-origin').value = meme?.origin ?? '';
+  $('#slang-edit-examples').value = (meme?.examples || []).join('\n');
+  $('#slang-edit-tags').value = (meme?.tags || []).join(', ');
+  $('#slang-edit-modal').style.display = 'flex';
+}
+
+$('#slang-edit-close').onclick = () => { $('#slang-edit-modal').style.display = 'none'; };
+$('#slang-edit-cancel').onclick = () => { $('#slang-edit-modal').style.display = 'none'; };
+$('#slang-edit-save').onclick = async () => {
+  const term = $('#slang-edit-term').value.trim();
+  const meaning = $('#slang-edit-meaning').value.trim();
+  if (!term || !meaning) return toast('梗名与含义解释都不能为空', true);
+
+  const btn = $('#slang-edit-save');
+  btn.disabled = true;
+  try {
+    // merge:false —— 面板是整条覆盖。模型侧的 record_community_meme 才走并集追加，
+    // 那边合并是对的；这边合并的话用户永远删不掉一个写错的别名。
+    const res = await api('/api/host/memes/upsert', {
+      method: 'POST',
+      body: {
+        id: editingSlangId,
+        term,
+        meaning,
+        origin: $('#slang-edit-origin').value.trim(),
+        aliases: splitList($('#slang-edit-aliases').value),
+        tags: splitList($('#slang-edit-tags').value),
+        examples: splitList($('#slang-edit-examples').value, '\n'),
+        merge: false,
+      },
+    });
+    if (res.ok) {
+      toast(`💾 梗「${res.term}」已${res.action === 'created' ? '收录' : '更新'}`);
+      $('#slang-edit-modal').style.display = 'none';
+      renderSlang();
+    } else {
+      toast(`保存失败：${res.message || res.error || '未知错误'}`, true);
+    }
+  } catch (e) {
+    toast(`保存异常：${e.message}`, true);
+  } finally {
+    btn.disabled = false;
+  }
+};
+
 // ============================================================ 刷新调度
 
 // ============================================================ 客制化设置
@@ -871,6 +981,7 @@ async function renderSettings() {
   $('#cfg-owner-id').value = d.config.identity?.ownerId ?? '';
   $('#cfg-robot-id').value = d.config.identity?.robotId ?? '';
   $('#cfg-bot-name').value = d.config.identity?.botName ?? '';
+  $('#cfg-owner-title').value = d.config.identity?.ownerTitle ?? '主人';
   $('#cfg-wake-mode').value = d.config.wake?.mode ?? 'both';
   $('#cfg-wake-pattern').value = d.config.wake?.namePattern ?? '';
   $('#cfg-ratelimit-users').value = (d.config.identity?.rateLimitUsers || []).join(', ');
@@ -887,7 +998,18 @@ async function renderSettings() {
     ? '已配置独立密钥（留空或掩码保持不变）'
     : `未配置独立 Key（优先读取环境变量 ${esc(d.config.meme?.visionKeyEnv || 'CPA_API_KEY')}）`;
 
-  // 3. 群友性格画像
+  // 3. 社区梗库梗雷达 —— 这三项的真源是统一宿主的 config.yaml，不是桥接配置，
+  // 所以单独取一次；宿主没起来就把整张卡片禁掉，免得用户白填。
+  try {
+    const s = await api('/api/host/memes/settings');
+    const on = s.ok !== false;
+    $('#cfg-slang-enabled').checked = on && s.settings.enabled;
+    $('#cfg-slang-limit').value = on ? s.settings.injectLimit : 2;
+    $('#cfg-slang-score').value = on ? s.settings.minScore : 0.45;
+    ['#cfg-slang-enabled', '#cfg-slang-limit', '#cfg-slang-score'].forEach((sel) => { $(sel).disabled = !on; });
+  } catch { /* 宿主不可达时保持输入框原样，保存时也会跳过 */ }
+
+  // 4. 群友性格画像
   $('#cfg-portrayal-enabled').checked = d.config.portrayal?.enabled !== false;
   $('#cfg-portrayal-interval').value = d.config.portrayal?.msgInterval ?? 50;
   $('#cfg-portrayal-initial').value = d.config.portrayal?.initialThreshold ?? 20;
@@ -970,6 +1092,7 @@ async function saveSettings() {
         ownerId: $('#cfg-owner-id').value.trim(),
         robotId: $('#cfg-robot-id').value.trim(),
         botName: $('#cfg-bot-name').value.trim(),
+        ownerTitle: $('#cfg-owner-title').value.trim(),
         rateLimitUsers,
         privateWhitelist,
       },
@@ -1042,6 +1165,19 @@ async function saveSettings() {
       method: 'PUT',
       body: payload,
     });
+
+    // 梗雷达存在宿主的 config.yaml 里，走宿主自己的端点；宿主挂了不该连累桥接配置
+    if (!$('#cfg-slang-enabled').disabled) {
+      const slangRes = await api('/api/host/memes/settings', {
+        method: 'POST',
+        body: {
+          enabled: $('#cfg-slang-enabled').checked,
+          injectLimit: Number($('#cfg-slang-limit').value) || 2,
+          minScore: Number($('#cfg-slang-score').value) || 0.45,
+        },
+      }).catch((e) => ({ ok: false, error: e.message }));
+      if (slangRes.ok === false) toast(`梗雷达设置未保存：${slangRes.error || '宿主不可达'}`, true);
+    }
 
     toast(res.message || '配置已成功保存！');
     await renderSettings();
@@ -1311,6 +1447,7 @@ const RENDERERS = {
   affection: renderAffection,
   portrayal: renderPortrayal,
   memes: renderMemes,
+  slang: renderSlang,
   settings: renderSettings,
 };
 
@@ -1327,11 +1464,13 @@ export async function refresh() {
   }
 }
 
+// 表单 / CRUD 页面不参与自动刷新，避免 5 秒一次重渲染打断用户正在敲的输入
+const NO_AUTOREFRESH = new Set(['sandbox', 'settings', 'plugins-portal', 'slang']);
+
 function scheduleAutoRefresh() {
   clearInterval(state.timer);
-  // 沙箱页、设置页、插件门户页不参与自动刷新，避免打断用户在表单或子插件界面的互动
   state.timer = setInterval(() => {
-    if (state.autorefresh && state.view !== 'sandbox' && state.view !== 'settings' && state.view !== 'plugins-portal') {
+    if (state.autorefresh && !NO_AUTOREFRESH.has(state.view)) {
       refresh();
     }
   }, 5000);
@@ -1374,6 +1513,10 @@ function bind() {
   $('#meme-q').onkeydown = (e) => { if (e.key === 'Enter') renderMemes(); };
   $('#meme-test').onclick = testMemeTag;
   $('#meme-tag').onkeydown = (e) => { if (e.key === 'Enter') testMemeTag(); };
+
+  $('#slang-filter').onclick = renderSlang;
+  $('#slang-q').onkeydown = (e) => { if (e.key === 'Enter') renderSlang(); };
+  $('#slang-new').onclick = () => openSlangEditor(null);
 
   $('#cfg-reload').onclick = () => {
     toast('正在重新载入配置…');

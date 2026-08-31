@@ -25,6 +25,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import signal
 import time
 from logging.handlers import RotatingFileHandler
@@ -157,6 +158,11 @@ class HostServer:
                 web.get("/api/v1/overview", self.handle_overview),
                 web.get("/api/v1/providers", self.handle_providers),
                 web.post("/api/v1/providers/update", self.handle_providers_update),
+                web.get("/api/v1/memes", self.handle_memes_list),
+                web.post("/api/v1/memes/upsert", self.handle_memes_upsert),
+                web.post("/api/v1/memes/delete", self.handle_memes_delete),
+                web.get("/api/v1/memes/settings", self.handle_memes_settings),
+                web.post("/api/v1/memes/settings", self.handle_memes_settings_update),
             ]
         )
         return app
@@ -613,6 +619,15 @@ class HostServer:
             }
         })
 
+    def _config_path(self) -> str:
+        """回写 YAML 时用的真实路径。
+
+        load_config 会把解析到的绝对路径写进 config["host"]["config_path"]
+        （runtime/config.py），所以 `-c 自定义配置` 启动时也对得上。直接取
+        DEFAULT_CONFIG_PATH 会把改动写进另一个文件，重启就没了。
+        """
+        return str((self.unified.config.get("host") or {}).get("config_path") or DEFAULT_CONFIG_PATH)
+
     async def handle_providers_update(self, request: web.Request) -> web.Response:
         """在线更新指定供应商接口通道的 Base URL、Model 或 Key"""
         body = await _read_json(request)
@@ -625,7 +640,7 @@ class HostServer:
         new_api_key = str(body.get("apiKey") or "").strip()
 
         import yaml
-        cfg_path = getattr(self.unified, "config_path", None) or DEFAULT_CONFIG_PATH
+        cfg_path = self._config_path()
         with open(cfg_path, "r", encoding="utf-8") as f:
             cfg_data = yaml.safe_load(f) or {}
 
@@ -687,6 +702,84 @@ class HostServer:
             "warning": warning,
         })
 
+    # ------------------------------------------------------------------
+    # 社区梗库（面板 CRUD + 梗雷达开关）
+    # ------------------------------------------------------------------
+
+    def _meme_store(self) -> Any:
+        store = getattr(self.unified, "meme_store", None)
+        if store is None:
+            raise web.HTTPServiceUnavailable(
+                text=json.dumps({"ok": False, "error": "meme_store_unavailable"}, ensure_ascii=False)
+            )
+        return store
+
+    async def handle_memes_list(self, request: web.Request) -> web.Response:
+        """列出梗库全部条目，供面板渲染。"""
+        limit = int(request.query.get("limit") or 200)
+        return _json(await self._meme_store().list_all_memes(limit=limit))
+
+    async def handle_memes_upsert(self, request: web.Request) -> web.Response:
+        """面板新增/编辑一条梗。
+
+        面板传 merge=False（默认）整条覆盖 —— 用户在输入框里删掉一个别名就该
+        真的删掉；模型侧的 record_community_meme 走 merge=True 只做补充。
+        """
+        body = await _read_json(request)
+        result = await self._meme_store().record_meme(
+            term=str(body.get("term") or ""),
+            meaning=str(body.get("meaning") or ""),
+            origin=str(body.get("origin") or ""),
+            examples=list(body.get("examples") or []),
+            aliases=list(body.get("aliases") or []),
+            tags=list(body.get("tags") or []),
+            meme_id=body.get("id"),
+            merge=bool(body.get("merge", False)),
+        )
+        return _json(result)
+
+    async def handle_memes_delete(self, request: web.Request) -> web.Response:
+        body = await _read_json(request)
+        result = await self._meme_store().delete_meme(
+            term=str(body.get("term") or ""), meme_id=body.get("id")
+        )
+        return _json(result)
+
+    async def handle_memes_settings(self, request: web.Request) -> web.Response:  # noqa: ARG002
+        cfg = self.unified.config.get("community_memes") or {}
+        return _json({
+            "ok": True,
+            "settings": {
+                "enabled": cfg.get("enabled", True) is not False,
+                "injectLimit": int(cfg.get("inject_limit", 2)),
+                "minScore": float(cfg.get("min_score", 0.45)),
+            },
+        })
+
+    async def handle_memes_settings_update(self, request: web.Request) -> web.Response:
+        """改梗雷达开关/条数/阈值，写回 config.yaml 并即刻生效。"""
+        body = await _read_json(request)
+        patch: dict[str, Any] = {}
+        if "enabled" in body:
+            patch["enabled"] = bool(body["enabled"])
+        if "injectLimit" in body:
+            patch["inject_limit"] = max(1, min(int(body["injectLimit"]), 10))
+        if "minScore" in body:
+            patch["min_score"] = max(0.0, min(float(body["minScore"]), 1.0))
+
+        import yaml
+        cfg_path = self._config_path()
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg_data = yaml.safe_load(f) or {}
+        cfg_data.setdefault("community_memes", {}).update(patch)
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg_data, f, allow_unicode=True, sort_keys=False)
+
+        # 内存配置同步：ContextBuilder 每轮现读 config，改完立刻生效，不用重启
+        self.unified.config.setdefault("community_memes", {}).update(patch)
+        logger.info("[社区梗库] 梗雷达设置已更新: %s", patch)
+        return await self.handle_memes_settings(request)
+
     async def start(self) -> None:
         self._runner = web.AppRunner(self.app, access_log=None)
         await self._runner.setup()
@@ -742,7 +835,7 @@ async def run(config_path: str | None = None, self_check: bool = False) -> int:
         snapshot = unified.health_snapshot()
         print(json.dumps(snapshot, ensure_ascii=False, indent=2, default=str))
         print(json.dumps(server.tools.manifest(), ensure_ascii=False, indent=2, default=str))
-        ok = snapshot.get("status") != "unhealthy" and len(server.tools.names) == 4
+        ok = snapshot.get("status") != "unhealthy" and len(server.tools.names) == 6
         await unified.close()
         return 0 if ok else 1
 

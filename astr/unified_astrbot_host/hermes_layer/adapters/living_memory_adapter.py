@@ -257,6 +257,71 @@ class LivingMemoryAdapter(UnifiedPluginContract):
                 },
                 handler=self._query_community_jargon,
             ),
+            HermesTool(
+                name="search_community_meme",
+                description=(
+                    "按梗名查一个梗的详情：来历、含义、经典例句。系统提示里的「梗雷达」会给出梗名，"
+                    "照抄进来即可。查空说明库里真没有，去联网查证后用 record_community_meme 收录，别瞎编。"
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "梗名或它的别名，如「坐好喽」。只填梗名本身，不要把群友整句原话丢进来——本工具是精确直查，传原话必然查空。",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "返回条数上限，默认 3。",
+                            "default": 3,
+                        },
+                    },
+                    "required": ["query"],
+                },
+                handler=self._search_community_meme,
+            ),
+            HermesTool(
+                name="record_community_meme",
+                description=(
+                    "向梗数据库录入或更新一条梗/黑话知识。在通过互联网查证确认了新梗含义，"
+                    "或群友教了新梗时调用。会自动进行向量化索引持久化入库。"
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "term": {
+                            "type": "string",
+                            "description": "梗名称/核心词（如「真拿你没办法，坐好喽」或「牢师」）。",
+                        },
+                        "meaning": {
+                            "type": "string",
+                            "description": "梗的含义解释与背景要点。",
+                        },
+                        "origin": {
+                            "type": "string",
+                            "description": "可选。出处渊源（如《咒术回战》、CS2、B站等）。",
+                            "default": "",
+                        },
+                        "examples": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "可选。经典例句、定型文或使用场景列表。",
+                        },
+                        "aliases": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "可选。别名、变体、衍生词、缩写列表。",
+                        },
+                        "tags": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "可选。标签分类（如 [二次元, 咒术回战, 定型文]）。",
+                        },
+                    },
+                    "required": ["term", "meaning"],
+                },
+                handler=self._record_community_meme,
+            ),
         ]
 
     # ==================================================================
@@ -268,6 +333,12 @@ class LivingMemoryAdapter(UnifiedPluginContract):
 
     def _graph_store(self) -> Any | None:
         return self._unified.graph_store()
+
+    def _meme_store(self) -> Any | None:
+        store = getattr(self._unified, "meme_store", None)
+        if store is None and hasattr(self._unified, "get_meme_store"):
+            store = self._unified.get_meme_store()
+        return store
 
     def _memory_processor(self) -> Any | None:
         plugin = self._unified.plugin("living_memory")
@@ -552,7 +623,60 @@ class LivingMemoryAdapter(UnifiedPluginContract):
         if graph is not None:
             payload["graph"] = graph
             payload["found"] = bool(graph.get("nodes") or graph.get("statements"))
+
+        # 如果图谱中未找到，联动查一下梗库作为补全
+        if not payload["found"]:
+            meme_store = self._meme_store()
+            if meme_store is not None:
+                try:
+                    meme_res = await meme_store.search_meme(term, limit=3)
+                    if meme_res.get("found"):
+                        payload["memeMatch"] = meme_res.get("results")
+                        payload["found"] = True
+                        payload["message"] = "在社区梗库中找到匹配条目"
+                except Exception as exc:
+                    logger.debug("黑话联动梗库查询失败: %s", exc)
+
         return payload
+
+    async def _search_community_meme(self, query: str, limit: int = 3) -> dict[str, Any]:
+        """语义检索社区梗库。"""
+        store = self._meme_store()
+        if store is None:
+            return {
+                "ok": False,
+                "error": "meme_store_unavailable",
+                "message": "社区梗数据库尚未初始化",
+                "results": [],
+                "found": False,
+            }
+        return await store.search_meme(query=query, limit=limit)
+
+    async def _record_community_meme(
+        self,
+        term: str,
+        meaning: str,
+        origin: str = "",
+        examples: list[str] | None = None,
+        aliases: list[str] | None = None,
+        tags: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """录入或更新社区梗。"""
+        store = self._meme_store()
+        if store is None:
+            return {
+                "ok": False,
+                "error": "meme_store_unavailable",
+                "message": "社区梗数据库尚未初始化",
+            }
+        return await store.record_meme(
+            term=term,
+            meaning=meaning,
+            origin=origin,
+            examples=examples,
+            aliases=aliases,
+            tags=tags,
+        )
 
     async def _graph_context_for(self, term: str) -> dict[str, Any] | None:
         store = self._graph_store()

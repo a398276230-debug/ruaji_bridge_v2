@@ -220,6 +220,9 @@ class ContextBuilder:
         started = time.perf_counter()
         self_id = str(self._unified.config.get("identity", {}).get("robot_id", ""))
 
+        # 梗雷达与插件注入并发跑：它唯一的开销是一次 embed 往返，藏在插件耗时里。
+        radar_task = asyncio.create_task(self._meme_radar(message))
+
         # 派发 OnWaitingLLMRequestEvent
         waiting_event = build_event(message, self_id=self_id)
         waiting_req = build_request(message, history)
@@ -274,6 +277,8 @@ class ContextBuilder:
             for key in self._present(SERIAL_STAGE):
                 blocks.extend(await self._run_plugin(key, message, history, self_id, base_blocks=blocks))
 
+        blocks.extend(await radar_task)
+
         merged = "\n\n".join(b.content for b in blocks if b.kind == "system_prompt" and b.content)
         context_text = "\n\n".join(b.content for b in blocks if b.content)
         return {
@@ -288,6 +293,51 @@ class ContextBuilder:
 
     def _present(self, keys: tuple[str, ...]) -> list[str]:
         return [k for k in keys if k in self._unified.mounts]
+
+    async def _meme_radar(self, message: InboundMessage) -> list[ContextBlock]:
+        """社区梗雷达 —— 只回梗名的一行提示，进 slang 槽。
+
+        释义不注入：模型看见梗名会自己去调 search_community_meme，一行 40 token
+        的提醒换掉几百 token 的全文。开关/条数/阈值在 config.yaml 的
+        `community_memes` 段，面板可改。
+        """
+        cfg = self._unified.config.get("community_memes") or {}
+        store = getattr(self._unified, "meme_store", None)
+        text = message.content or message.text
+        if store is None or not text or cfg.get("enabled", True) is False:
+            return []
+
+        started = time.perf_counter()
+        try:
+            hint = await asyncio.wait_for(
+                store.hint_for(
+                    text,
+                    limit=int(cfg.get("inject_limit", 2)),
+                    min_score=float(cfg.get("min_score", 0.45)),
+                ),
+                timeout=self.timeout_s,
+            )
+        except Exception as exc:  # noqa: BLE001 —— 雷达是锦上添花，炸了不该拖累整次聚合
+            logger.warning("社区梗雷达失败: %s", exc)
+            return []
+
+        if not hint.get("found"):
+            return []
+        content = hint["text"]
+        return [
+            ContextBlock(
+                source="community_memes",
+                kind="system_prompt",
+                content=content,
+                tokens_estimate=estimate_tokens(content),
+                elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
+                detail={
+                    "slot": "slang",
+                    "dedupeKey": "community-meme-radar",
+                    "terms": hint.get("terms") or [],
+                },
+            )
+        ]
 
     async def _run_plugin(
         self,

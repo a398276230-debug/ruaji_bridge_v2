@@ -69,6 +69,12 @@ plugins:
       enable_group_chat: true
       decision_ai_provider_id: ''
 
+community_memes:
+  # 梗雷达：每轮对话把群友原话与全库比向量，只把命中的梗名注入 slang 槽。
+  # 释义不注入 —— 模型看见梗名会自己调 search_community_meme 查详情。
+  enabled: true
+  inject_limit: 2
+  min_score: 0.45
 hermes:
   export_enabled: true
   export_dir: ${HERMES_AGENT_DIR:-F:/hermes-agent}

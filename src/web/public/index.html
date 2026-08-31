@@ -37,6 +37,7 @@
     <button class="tab" data-view="affection">好感度</button>
     <button class="tab" data-view="portrayal">群友画像</button>
     <button class="tab" data-view="memes">表情包</button>
+    <button class="tab" data-view="slang">社区梗库</button>
     <button class="tab" data-view="settings">客制化设置</button>
   </nav>
 
@@ -220,6 +221,19 @@
       <div id="meme-test-result"></div>
       <div class="meme-grid" id="meme-grid"></div>
     </section>
+
+    <!-- ============ 社区梗库 ============ -->
+    <section class="view" id="view-slang">
+      <div class="toolbar">
+        <input type="search" id="slang-q" placeholder="按梗名 / 别名 / 含义 过滤…">
+        <button class="btn" id="slang-filter">过滤</button>
+        <span class="divider"></span>
+        <button class="btn primary" id="slang-new">＋ 新增梗</button>
+        <span class="hint" id="slang-hint"></span>
+      </div>
+      <p class="hint">每轮对话会把群友原话与整库比向量，只把命中的<strong>梗名</strong>注入提示词（梗雷达）；模型想知道详情会自己调 <code>search_community_meme</code>。条数与开关在「客制化设置」里。</p>
+      <div class="meme-grid" id="slang-grid"></div>
+    </section>
     <!-- ============ 客制化设置 ============ -->
     <section class="view" id="view-settings">
       <div class="toolbar cfg-toolbar">
@@ -256,6 +270,12 @@
                 <input type="text" id="cfg-bot-name" placeholder="如: 瑞姬">
                 <span class="field-desc">机器人的常用名字</span>
               </label>
+              <label>对主人的称呼 (ownerTitle)
+                <input type="text" id="cfg-owner-title" placeholder="如: 主人">
+                <span class="field-desc">机器人在对话中对主人的专属称呼，RP 场景可自定义（如「哥哥」「大小姐」「饲主」），<strong>留空即默认「主人」</strong></span>
+              </label>
+            </div>
+            <div class="field-row">
               <label>唤醒响应模式 (wake.mode)
                 <select id="cfg-wake-mode">
                   <option value="both">真 @ 与名字呼唤双触发 (推荐)</option>
@@ -334,6 +354,32 @@
               <button class="btn secondary" id="cfg-test-vision-btn" type="button">⚡ 测试识图模型连通性</button>
               <span class="test-status" id="cfg-test-vision-res"></span>
             </div>
+          </div>
+        </div>
+
+        <!-- 卡片 3: 社区梗库梗雷达 -->
+        <div class="cfg-card">
+          <div class="cfg-card-header">
+            <span class="cfg-icon">📡</span>
+            <h3>社区梗库 · 梗雷达注入</h3>
+          </div>
+          <div class="cfg-card-body">
+            <div class="field-row-checks">
+              <label class="check">
+                <input type="checkbox" id="cfg-slang-enabled"> 每轮对话自动注入梗名提示
+              </label>
+            </div>
+            <div class="field-row">
+              <label>注入条数上限
+                <input type="number" id="cfg-slang-limit" min="1" max="10" step="1" placeholder="2">
+                <span class="field-desc">一轮最多提示几个梗名。只注入名字不注入释义，一条约 20 token</span>
+              </label>
+              <label>命中阈值 (余弦相似度)
+                <input type="number" id="cfg-slang-score" min="0" max="1" step="0.05" placeholder="0.45">
+                <span class="field-desc">调高更准但漏梗，调低更敏感但会提示无关的梗。默认 0.45</span>
+              </label>
+            </div>
+            <span class="field-desc">这三项保存时直接写回统一宿主的 <code>config.yaml</code>，即刻生效无需重启。梗条目本身在「社区梗库」标签页里增删改。</span>
           </div>
         </div>
 
@@ -675,6 +721,45 @@
       <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:20px; border-top:1px solid rgba(255,255,255,0.08); padding-top:14px;">
         <button class="btn ghost" id="meme-edit-cancel" style="background:#1e2330; border:1px solid rgba(255,255,255,0.1); color:#94a3b8;">取消</button>
         <button class="btn primary" id="meme-edit-save" style="background:var(--accent); color:#fff;">💾 保存修改</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="slang-edit-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:#151821; border:1px solid rgba(255,255,255,0.15); border-radius:10px; width:520px; max-width:92vw; padding:22px; box-shadow:0 20px 50px rgba(0,0,0,0.85); color:#e2e8f0;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:12px;">
+        <h3 style="margin:0; font-size:16px; font-weight:600; color:#fff;" id="slang-edit-title">✏️ 编辑社区梗</h3>
+        <button class="btn btn-sm ghost" id="slang-edit-close" style="color:#94a3b8; font-size:14px; padding:2px 8px;">✕</button>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:12px; max-height:62vh; overflow-y:auto;">
+        <div>
+          <label style="font-size:12px; color:#94a3b8; display:block; margin-bottom:4px;">梗名（唯一，模型查库用的就是它）</label>
+          <input type="text" id="slang-edit-term" placeholder="如: 「真拿你没办法，坐好喽」" style="width:100%; background:#0e1017; border:1px solid rgba(255,255,255,0.12); color:#fff; padding:7px 10px; border-radius:6px;">
+        </div>
+        <div>
+          <label style="font-size:12px; color:#94a3b8; display:block; margin-bottom:4px;">别名 / 变体（逗号分隔，直查会逐个比对）</label>
+          <input type="text" id="slang-edit-aliases" placeholder="如: 坐好喽, 坐好咯, 讲故事定型文" style="width:100%; background:#0e1017; border:1px solid rgba(255,255,255,0.12); color:#fff; padding:7px 10px; border-radius:6px;">
+        </div>
+        <div>
+          <label style="font-size:12px; color:#94a3b8; display:block; margin-bottom:4px;">含义解释</label>
+          <textarea id="slang-edit-meaning" rows="3" placeholder="这个梗是什么意思、在什么语境下用" style="width:100%; background:#0e1017; border:1px solid rgba(255,255,255,0.12); color:#fff; padding:7px 10px; border-radius:6px; resize:vertical; line-height:1.4;"></textarea>
+        </div>
+        <div>
+          <label style="font-size:12px; color:#94a3b8; display:block; margin-bottom:4px;">出处渊源</label>
+          <input type="text" id="slang-edit-origin" placeholder="出自哪部作品 / 哪场直播 / 哪个群友" style="width:100%; background:#0e1017; border:1px solid rgba(255,255,255,0.12); color:#fff; padding:7px 10px; border-radius:6px;">
+        </div>
+        <div>
+          <label style="font-size:12px; color:#94a3b8; display:block; margin-bottom:4px;">经典例句 / 场景（每行一条）</label>
+          <textarea id="slang-edit-examples" rows="3" placeholder="会赢的！&#10;也就是说……没错，是五条悟赢了！" style="width:100%; background:#0e1017; border:1px solid rgba(255,255,255,0.12); color:#fff; padding:7px 10px; border-radius:6px; resize:vertical; line-height:1.4;"></textarea>
+        </div>
+        <div>
+          <label style="font-size:12px; color:#94a3b8; display:block; margin-bottom:4px;">标签（逗号分隔）</label>
+          <input type="text" id="slang-edit-tags" placeholder="如: 二次元, 名场面, 群聊黑话" style="width:100%; background:#0e1017; border:1px solid rgba(255,255,255,0.12); color:#fff; padding:7px 10px; border-radius:6px;">
+        </div>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:20px; border-top:1px solid rgba(255,255,255,0.08); padding-top:14px;">
+        <button class="btn ghost" id="slang-edit-cancel" style="background:#1e2330; border:1px solid rgba(255,255,255,0.1); color:#94a3b8;">取消</button>
+        <button class="btn primary" id="slang-edit-save" style="background:var(--accent); color:#fff;">💾 保存并重算向量</button>
       </div>
     </div>
   </div>

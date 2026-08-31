@@ -41,5 +41,11 @@ export function createHostApi(deps) {
     'GET /api/host/providers': async () => forwardGet('/api/v1/providers'),
     'POST /api/host/providers/update': async ({ body }) => forwardPost('/api/v1/providers/update', body),
     'GET /api/host/plugins-pages': async () => forwardGet('/api/v1/plugins/pages'),
+    // 社区梗库：面板直接读写宿主的 SQLite 梗库，桥接不留第二份副本
+    'GET /api/host/memes': async () => forwardGet('/api/v1/memes?limit=200'),
+    'POST /api/host/memes/upsert': async ({ body }) => forwardPost('/api/v1/memes/upsert', body),
+    'POST /api/host/memes/delete': async ({ body }) => forwardPost('/api/v1/memes/delete', body),
+    'GET /api/host/memes/settings': async () => forwardGet('/api/v1/memes/settings'),
+    'POST /api/host/memes/settings': async ({ body }) => forwardPost('/api/v1/memes/settings', body),
   };
 }
