@@ -164,6 +164,7 @@ export function createContainer(config, overrides = {}) {
       sessionHeader: config.model.sessionHeader,
       sessionPrefix: config.model.sessionPrefix,
       sessionCutoffHour: config.model.sessionCutoffHour,
+      sessionRotationsPerDay: config.model.sessionRotationsPerDay,
       sessionStore: modelSessionStore,
       timeoutMs: config.model.timeoutMs,
       maxRetries: config.model.maxRetries,

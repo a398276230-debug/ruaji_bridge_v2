@@ -478,7 +478,21 @@
               </label>
               <label>每日会话轮转时间 (点，0-23)
                 <input type="number" id="cfg-model-cutoff-hour" min="0" max="23" placeholder="7">
-                <span class="field-desc">以北京时间指定整点开启全新 Hermes 会话，默认 7 点</span>
+                <span class="field-desc">以北京时间指定首个轮转整点，默认 7 点</span>
+              </label>
+            </div>
+            <div class="field-row single">
+              <label>每日会话轮转次数
+                <select id="cfg-model-rotations">
+                  <option value="1">每天 1 次（默认）</option>
+                  <option value="2">每 12 小时 1 次</option>
+                  <option value="3">每 8 小时 1 次</option>
+                  <option value="4">每 6 小时 1 次</option>
+                  <option value="6">每 4 小时 1 次</option>
+                  <option value="8">每 3 小时 1 次</option>
+                  <option value="12">每 2 小时 1 次</option>
+                </select>
+                <span class="field-desc">从上方轮转时间点起，每 24/N 小时开启全新 Hermes 会话</span>
               </label>
             </div>
             <div class="field-row">

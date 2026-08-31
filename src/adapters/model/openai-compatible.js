@@ -24,6 +24,8 @@ export class OpenAiCompatibleAdapter {
    * @param {string} [opts.apiKey]
    * @param {string} [opts.sessionHeader] 会话隔离头名，Hermes 用 X-Hermes-Session-Id
    * @param {string} [opts.sessionPrefix]
+   * @param {number} [opts.sessionCutoffHour]  每日轮转分界整点（北京时间，默认 7）
+   * @param {number} [opts.sessionRotationsPerDay]  每日轮转次数，须整除 24（默认 1）
    * @param {number} [opts.timeoutMs]
    * @param {number} [opts.maxRetries=0]
    * @param {import('../../core/logger.js').Logger} [opts.logger]
@@ -40,6 +42,11 @@ export class OpenAiCompatibleAdapter {
     // 0 点是合法分界，不能用 `|| 7` 兜底（会把 0 和 "0" 一起吃掉）
     const cutoff = Number(opts.sessionCutoffHour);
     this.sessionCutoffHour = Number.isInteger(cutoff) && cutoff >= 0 && cutoff <= 23 ? cutoff : 7;
+    // 每日轮转次数 N：必须整除 24 才能得到均匀的轮转点（合法值 1/2/3/4/6/8/12）
+    const rotations = Number(opts.sessionRotationsPerDay);
+    this.sessionRotationsPerDay = Number.isInteger(rotations) && rotations >= 1 && rotations <= 12 && 24 % rotations === 0
+      ? rotations
+      : 1;
     this.timeoutMs = opts.timeoutMs ?? 1800000;
     this.maxRetries = opts.maxRetries ?? 0;
     this.log = opts.logger?.child({ component: 'model-adapter' }) ?? console;
@@ -61,22 +68,29 @@ export class OpenAiCompatibleAdapter {
   }
 
   /**
-   * 计算以北京时间 (UTC+8) 每日 cutoffHour 点为分界的业务日期标记 (YYYYMMDD)
-   * 分界点之前归属上一天，分界点及之后归属当天。默认 7 点，可由 model.sessionCutoffHour 配置。
-   * 严格基于 UTC 偏移计算，不受运行环境/宿主系统时区干扰。
+   * 计算以北京时间 (UTC+8) 每日 cutoffHour 点为首个分界的业务日期标记。
+   * N=1（默认）输出 YYYYMMDD；N>1 追加周期后缀 _P（P 从 1 起，每 24/N 小时一个周期），
+   * 分界瞬间归属新周期。默认 7 点、每日 1 轮，可由 model.sessionCutoffHour /
+   * model.sessionRotationsPerDay 配置。严格基于 UTC 偏移计算，不受运行环境时区干扰。
    */
-  static getBusinessDateTag(now = new Date(), cutoffHour = 7) {
+  static getBusinessDateTag(now = new Date(), cutoffHour = 7, rotationsPerDay = 1) {
     const d = now instanceof Date ? now : new Date(now);
     const bjAdjusted = new Date(d.getTime() + (8 - cutoffHour) * 3600000);
     const y = bjAdjusted.getUTCFullYear();
     const m = String(bjAdjusted.getUTCMonth() + 1).padStart(2, '0');
     const day = String(bjAdjusted.getUTCDate()).padStart(2, '0');
-    return `${y}${m}${day}`;
+    const base = `${y}${m}${day}`;
+    if (rotationsPerDay > 1) {
+      // 位移后 getUTCHours() 恰为「距 cutoff 的小时数」(0-23)，直接按周期长度切段
+      const period = Math.floor(bjAdjusted.getUTCHours() / (24 / rotationsPerDay)) + 1;
+      return `${base}_${period}`;
+    }
+    return base;
   }
 
   getSessionId(sessionKey, now = new Date()) {
     const key = OpenAiCompatibleAdapter.sanitizeSessionKey(sessionKey);
-    const currentTag = OpenAiCompatibleAdapter.getBusinessDateTag(now, this.sessionCutoffHour);
+    const currentTag = OpenAiCompatibleAdapter.getBusinessDateTag(now, this.sessionCutoffHour, this.sessionRotationsPerDay);
     const entry = this.sessionStore.get(key);
     if (!entry || entry.tag !== currentTag) {
       const newId = `${this.sessionPrefix}${key}_${currentTag}`;
@@ -92,7 +106,7 @@ export class OpenAiCompatibleAdapter {
    */
   async resetSession(sessionKey, now = new Date()) {
     const key = OpenAiCompatibleAdapter.sanitizeSessionKey(sessionKey);
-    const currentTag = OpenAiCompatibleAdapter.getBusinessDateTag(now, this.sessionCutoffHour);
+    const currentTag = OpenAiCompatibleAdapter.getBusinessDateTag(now, this.sessionCutoffHour, this.sessionRotationsPerDay);
     const oldEntry = this.sessionStore.get(key);
     const oldId = oldEntry?.sessionId;
     if (oldId) {

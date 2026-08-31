@@ -83,6 +83,7 @@ export function createConfigApi(deps) {
           sessionHeader: config.model?.sessionHeader ?? 'X-Hermes-Session-Id',
           sessionPrefix: config.model?.sessionPrefix ?? 'qq_',
           sessionCutoffHour: config.model?.sessionCutoffHour ?? 7,
+          sessionRotationsPerDay: config.model?.sessionRotationsPerDay ?? 1,
           timeoutMs: config.model?.timeoutMs ?? 1800000,
           stream: config.model?.stream !== false,
           maxRetries: config.model?.maxRetries ?? 0,
@@ -248,6 +249,12 @@ export function createConfigApi(deps) {
             errors.push(`每日会话轮转时间 非法: ${updates.model.sessionCutoffHour}（应为 0-23 的整数）`);
           }
         }
+        if (updates.model.sessionRotationsPerDay != null) {
+          const n = Number(updates.model.sessionRotationsPerDay);
+          if (!Number.isInteger(n) || n < 1 || n > 12 || 24 % n !== 0) {
+            errors.push(`每日会话轮转次数 非法: ${updates.model.sessionRotationsPerDay}（应为 1/2/3/4/6/8/12 之一）`);
+          }
+        }
       }
 
       if (updates.napcat) {
@@ -319,6 +326,7 @@ export function createConfigApi(deps) {
         if (updates.model.sessionHeader) m.sessionHeader = updates.model.sessionHeader.trim();
         if (updates.model.sessionPrefix) m.sessionPrefix = updates.model.sessionPrefix.trim();
         if (updates.model.sessionCutoffHour != null) m.sessionCutoffHour = Number(updates.model.sessionCutoffHour);
+        if (updates.model.sessionRotationsPerDay != null) m.sessionRotationsPerDay = Number(updates.model.sessionRotationsPerDay);
         if (updates.model.timeoutMs != null) m.timeoutMs = Number(updates.model.timeoutMs);
         if (updates.model.stream != null) m.stream = Boolean(updates.model.stream);
         diskConfig.model = m;
@@ -437,6 +445,11 @@ export function createConfigApi(deps) {
         config.model.sessionCutoffHour = diskConfig.model.sessionCutoffHour;
         // 分界值在适配器构造时就取好了，必须同步推给活着的实例，否则要重启才生效
         if (modelAdapter) modelAdapter.sessionCutoffHour = diskConfig.model.sessionCutoffHour;
+      }
+      if (diskConfig.model?.sessionRotationsPerDay != null) {
+        config.model.sessionRotationsPerDay = diskConfig.model.sessionRotationsPerDay;
+        // 轮转次数同理：构造时取好，必须热推给活着的实例
+        if (modelAdapter) modelAdapter.sessionRotationsPerDay = diskConfig.model.sessionRotationsPerDay;
       }
       if (diskConfig.context) Object.assign(config.context, diskConfig.context);
       if (diskConfig.reply) Object.assign(config.reply, diskConfig.reply);

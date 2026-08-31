@@ -23,6 +23,7 @@ export function createModelAdapter(config, { logger, fetchImpl, sessionStore } =
       sessionHeader: config.model.sessionHeader,
       sessionPrefix: config.model.sessionPrefix,
       sessionCutoffHour: config.model.sessionCutoffHour,
+      sessionRotationsPerDay: config.model.sessionRotationsPerDay,
       sessionStore,
       timeoutMs: config.model.timeoutMs,
       maxRetries: config.model.maxRetries,

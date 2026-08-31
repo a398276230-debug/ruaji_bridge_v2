@@ -1026,6 +1026,7 @@ async function renderSettings() {
   $('#cfg-model-env').value = d.config.model?.apiKeyEnv ?? '';
   $('#cfg-model-timeout').value = d.config.model?.timeoutMs ?? 1800000;
   $('#cfg-model-cutoff-hour').value = d.config.model?.sessionCutoffHour ?? 7;
+  $('#cfg-model-rotations').value = String(d.config.model?.sessionRotationsPerDay ?? 1);
   $('#cfg-model-stream').checked = d.config.model?.stream !== false;
   $('#cfg-model-key-desc').textContent = d.config.model?.hasApiKey
     ? '已配置独立密钥（留空或掩码保持不变）'
@@ -1114,6 +1115,7 @@ async function saveSettings() {
         sessionCutoffHour: $('#cfg-model-cutoff-hour').value.trim() === ''
           ? 7
           : Number($('#cfg-model-cutoff-hour').value),
+        sessionRotationsPerDay: Number($('#cfg-model-rotations').value) || 1,
         stream: $('#cfg-model-stream').checked,
       },
       meme: {

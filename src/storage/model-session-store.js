@@ -3,7 +3,7 @@
  *
  * 解决问题：
  *   1. 桥接重启后，保留私聊/群聊当前所处的分支 Session ID（包含 /new 后的轮换 ID）。
- *   2. 跨过每日 07:00 业务日期分界时，自动按新日期重置并持久化。
+ *   2. 跨过业务日期分界（默认每日 07:00，支持一天多次轮转）时，自动按新 tag 重置并持久化。
  *   3. 规范化 /new 重置后的命名：从无序时间戳改为按日递增序号（例如 _20260828_#02）。
  *
  * 全局唯一：整个进程只应有一个实例（由 container 建好后注入各 adapter）。
@@ -37,9 +37,9 @@ export class ModelSessionStore {
     this.load();
   }
 
-  /** 'YYYYMMDD' -> UTC ms；非法格式返回 NaN */
+  /** 'YYYYMMDD' 或一天多轮转的 'YYYYMMDD_P' -> 当天 UTC ms；非法格式返回 NaN */
   static tagToMs(tag) {
-    const m = /^(\d{4})(\d{2})(\d{2})$/.exec(String(tag ?? ''));
+    const m = /^(\d{4})(\d{2})(\d{2})(?:_\d+)?$/.exec(String(tag ?? ''));
     if (!m) return NaN;
     return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   }

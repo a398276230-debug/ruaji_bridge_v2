@@ -31,6 +31,7 @@ const DEFAULTS = {
     sessionHeader: 'X-Hermes-Session-Id',
     sessionPrefix: 'qq_',
     sessionCutoffHour: 7,
+    sessionRotationsPerDay: 1,
     timeoutMs: 1800000,
     stream: true,
     maxRetries: 0,
@@ -144,6 +145,7 @@ const ENV_OVERRIDES = [
   ['RUAJI_V2_MODEL_BASE_URL', 'model.baseUrl', String],
   ['RUAJI_V2_MODEL_NAME', 'model.model', String],
   ['RUAJI_V2_MODEL_SESSION_CUTOFF_HOUR', 'model.sessionCutoffHour', Number],
+  ['RUAJI_V2_MODEL_SESSION_ROTATIONS_PER_DAY', 'model.sessionRotationsPerDay', Number],
   ['RUAJI_V2_HEALTH_PORT', 'health.port', Number],
   ['RUAJI_V2_WEB_ENABLED', 'web.enabled', toBool],
   ['RUAJI_V2_WEB_PORT', 'web.port', Number],
@@ -249,6 +251,12 @@ function validate(config) {
     const h = Number(config.model.sessionCutoffHour);
     if (!Number.isInteger(h) || h < 0 || h > 23) {
       errors.push(`model.sessionCutoffHour 非法: ${config.model.sessionCutoffHour}（应为 0-23 的整数）`);
+    }
+  }
+  if (config.model.sessionRotationsPerDay != null) {
+    const n = Number(config.model.sessionRotationsPerDay);
+    if (!Number.isInteger(n) || n < 1 || n > 12 || 24 % n !== 0) {
+      errors.push(`model.sessionRotationsPerDay 非法: ${config.model.sessionRotationsPerDay}（应为 1/2/3/4/6/8/12 之一）`);
     }
   }
   if (!config.identity.robotId) errors.push('identity.robotId 缺失（缺了就无法过滤自身消息与判定 @）');
