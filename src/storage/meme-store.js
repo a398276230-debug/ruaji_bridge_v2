@@ -175,18 +175,20 @@ export class MemeStore {
     return item;
   }
 
-  collectMeme({ uid, nickname, filename, buffer }) {
+  collectMeme({ uid, nickname, filename, buffer, label }) {
     if (!buffer) return null;
     const sess = this.getCollectSession(uid);
     if (sess) {
       const ext = path.extname(filename || '.jpg').replace('.', '') || 'jpg';
+      // 商城表情自带的 summary（如 "摸头"）比会话默认标签更准，有就优先当初始标签
+      const lb = String(label ?? '').trim();
       try {
         const item = this.saveDirectMeme({
           buffer,
           ext,
           category: sess.category,
-          tag: sess.tag,
-          keywords: [sess.tag, sess.category],
+          tag: lb || sess.tag,
+          keywords: lb ? [lb, sess.tag, sess.category] : [sess.tag, sess.category],
           name: filename || `collect_${sess.saved + 1}.${ext}`,
         });
         sess.count++;

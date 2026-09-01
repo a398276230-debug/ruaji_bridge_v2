@@ -203,6 +203,15 @@ export class InboundNormalizer {
         if (seg.type === 'image') {
           const item = await this.media.ingestImage(seg.data, { signal });
           if (item) out.push(item);
+        } else if (seg.type === 'mface') {
+          // QQ 商城表情（LLBOT/NapCat 的 mface 段）。data.url 是 raw*.gif 直链，
+          // 走同一条图片管线；summary（如 "[摸头]"）是现成的标签线索，
+          // 剥掉方括号挂到 label 上，表情包收集入库时当初始标签。
+          const item = await this.media.ingestImage(seg.data, { signal });
+          if (item) {
+            item.label = String(seg.data?.summary ?? '').replace(/^\[+|\]+$/g, '').trim() || null;
+            out.push(item);
+          }
         } else if (seg.type === 'file' || seg.type === 'offline_file') {
           out.push(await this.media.ingestFile(seg.data, { groupId, signal }));
         }

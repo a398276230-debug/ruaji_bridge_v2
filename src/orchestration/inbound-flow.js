@@ -142,6 +142,7 @@ export class InboundFlow {
               nickname: inbound.sender?.displayName ?? inbound.userId,
               filename: path.basename(m.localPath),
               buffer: buf,
+              label: m.label,
             });
             if (item) collectedCount++;
           } catch (e) {

@@ -528,7 +528,7 @@ export function createConfigApi(deps) {
           method: 'POST',
           headers,
           body: JSON.stringify(testPayload),
-          signal: AbortSignal.timeout(10000),
+          signal: AbortSignal.timeout(45000),
         });
 
         const latencyMs = Date.now() - startTime;
