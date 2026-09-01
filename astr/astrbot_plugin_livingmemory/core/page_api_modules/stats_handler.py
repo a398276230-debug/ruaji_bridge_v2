@@ -101,37 +101,6 @@ class StatsHandler:
                 else []
             )
 
-            # 统计未总结轮次与反思进度
-            total_unsummarized_messages = 0
-            total_conversation_messages = 0
-            try:
-                import json, aiosqlite
-                from astrbot.api.star import StarTools
-                conv_db = str(StarTools.get_data_dir("astrbot_plugin_livingmemory") / "conversations.db")
-                async with aiosqlite.connect(conv_db) as db:
-                    cursor = await db.execute("SELECT COUNT(*) FROM messages")
-                    total_conversation_messages = int((await cursor.fetchone())[0])
-                    
-                    cursor = await db.execute("SELECT session_id, message_count, metadata FROM sessions")
-                    rows = await cursor.fetchall()
-                    for sid, mcnt, meta_json in rows:
-                        meta = json.loads(meta_json) if meta_json else {}
-                        last_idx = meta.get("last_summarized_index", 0)
-                        diff = max(0, (mcnt or 0) - last_idx)
-                        total_unsummarized_messages += diff
-            except Exception as e:
-                logger.debug(f"统计反思进度异常: {e}")
-
-            unsummarized_rounds = total_unsummarized_messages // 2
-            trigger_rounds = 10
-            stats["reflection_progress"] = {
-                "unsummarized_messages": total_unsummarized_messages,
-                "unsummarized_rounds": unsummarized_rounds,
-                "trigger_rounds": trigger_rounds,
-                "remaining_rounds": max(0, trigger_rounds - unsummarized_rounds),
-                "total_messages": total_conversation_messages,
-            }
-
             return self.utils.ok(stats)
         except Exception as exc:
             logger.error(f"[PageAPI] 获取统计信息失败: {exc}", exc_info=True)

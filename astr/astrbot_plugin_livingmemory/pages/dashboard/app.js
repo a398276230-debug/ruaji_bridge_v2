@@ -275,25 +275,6 @@ import {
       const sessions = data.sessions || {};
       const sessionCount = typeof sessions === "object" ? Object.keys(sessions).length : 0;
       document.getElementById("gs-sessions").textContent = sessionCount;
-
-      if (data.reflection_progress) {
-        const rp = data.reflection_progress;
-        const currentRounds = rp.unsummarized_rounds || 0;
-        const triggerRounds = rp.trigger_rounds || 10;
-        const remaining = Math.max(0, triggerRounds - currentRounds);
-
-        const elRounds = document.getElementById("gs-rounds");
-        if (elRounds) elRounds.textContent = `${currentRounds} / ${triggerRounds} 轮`;
-
-        const elLabel = document.getElementById("gs-rounds-label");
-        if (elLabel) {
-          if (remaining > 0) {
-            elLabel.innerHTML = `还差 <strong style="color:var(--accent,#06b6d4)">${remaining}</strong> 轮触发总结`;
-          } else {
-            elLabel.innerHTML = `<span style="color:#10b981;font-weight:600">已积满 · 机器人下次回复时总结</span>`;
-          }
-        }
-      }
     } catch (e) {
       showToast(e.message || window.t("misc.statsFail"), true);
     }
@@ -305,23 +286,6 @@ import {
   async function init() {
     hydrateIcons();
     initMotionField();
-
-    const btnSummary = document.getElementById("btn-manual-summary");
-    if (btnSummary) {
-      btnSummary.addEventListener("click", async () => {
-        try {
-          btnSummary.disabled = true;
-          showToast("正在执行记忆整合与反思总结...");
-          await api.post("consolidation/run", {});
-          showToast("记忆反思总结任务已完成！");
-          fetchGraphStats();
-        } catch (err) {
-          showToast(err.message || "总结失败", true);
-        } finally {
-          btnSummary.disabled = false;
-        }
-      });
-    }
     const context = await api.ready();
 
     if (api.bridge && typeof api.bridge.onContext === "function") {

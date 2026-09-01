@@ -240,24 +240,6 @@ class LivingMemoryAdapter(UnifiedPluginContract):
                 handler=self._query_knowledge_graph,
             ),
             HermesTool(
-                name="query_community_jargon",
-                description=(
-                    "查群黑话。遇到看不懂的群内梗、缩写、自造词时调用，返回推断出的含义、"
-                    "出现次数与真实使用语境。"
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "word": {
-                            "type": "string",
-                            "description": "要查的词。",
-                        },
-                    },
-                    "required": ["word"],
-                },
-                handler=self._query_community_jargon,
-            ),
-            HermesTool(
                 name="search_community_meme",
                 description=(
                     "按梗名查一个梗的详情：来历、含义、经典例句。系统提示里的「梗雷达」会给出梗名，"
@@ -602,42 +584,6 @@ class LivingMemoryAdapter(UnifiedPluginContract):
             ],
             "nodesVisited": len(visited), "relations": relations, "statements": statements,
         }
-
-    async def _query_community_jargon(self, word: str) -> dict[str, Any]:
-        term = str(word or "").strip()
-        if not term:
-            return {"ok": False, "error": "empty_word", "found": False}
-
-        # 黑话功能原依赖 self_learning 的 db_manager，现改为直接从 graph_store 查
-        store = self._graph_store()
-        if store is None:
-            return {
-                "ok": True, "word": term, "found": False, "count": 0,
-                "entries": [], "message": "未记录该黑话",
-            }
-
-        payload: dict[str, Any] = {
-            "ok": True, "word": term, "found": False, "count": 0, "entries": [],
-        }
-        graph = await self._graph_context_for(term)
-        if graph is not None:
-            payload["graph"] = graph
-            payload["found"] = bool(graph.get("nodes") or graph.get("statements"))
-
-        # 如果图谱中未找到，联动查一下梗库作为补全
-        if not payload["found"]:
-            meme_store = self._meme_store()
-            if meme_store is not None:
-                try:
-                    meme_res = await meme_store.search_meme(term, limit=3)
-                    if meme_res.get("found"):
-                        payload["memeMatch"] = meme_res.get("results")
-                        payload["found"] = True
-                        payload["message"] = "在社区梗库中找到匹配条目"
-                except Exception as exc:
-                    logger.debug("黑话联动梗库查询失败: %s", exc)
-
-        return payload
 
     async def _search_community_meme(self, query: str, limit: int = 3) -> dict[str, Any]:
         """语义检索社区梗库。"""

@@ -301,6 +301,19 @@ class _StarManager:
         return self._context.get_all_stars()
 
 
+class _ProviderManagerView:
+    """真 AstrBot `ProviderManager.inst_map` 查询路径的替身视图。
+
+    LivingMemory 静默解析 Provider（`_get_provider_by_id(silent=True)`，
+    Rerank/Embedding 都走这条）绕过 `get_provider_by_id`，直接摸
+    `context.provider_manager.inst_map`。这里包着 `Context.providers`
+    的活引用，晚于视图创建的注册同样可见。
+    """
+
+    def __init__(self, providers: dict[str, "Provider"]) -> None:
+        self.inst_map: dict[str, Provider] = providers
+
+
 class Context:
     """插件与框架之间的唯一接口面。"""
 
@@ -366,6 +379,11 @@ class Context:
         return list(star_registry)
 
     # ---------- Provider ----------
+
+    @property
+    def provider_manager(self) -> _ProviderManagerView:
+        """老式 inst_map 访问路径的入口（见 _ProviderManagerView 说明）。"""
+        return _ProviderManagerView(self.providers)
 
     def register_provider(self, provider: Provider, *aliases: str) -> None:
         meta = provider.meta()

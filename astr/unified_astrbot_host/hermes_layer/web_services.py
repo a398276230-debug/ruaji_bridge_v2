@@ -16,7 +16,7 @@ from typing import Any
 
 from aiohttp import web
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from quart import Quart
 import uvicorn
@@ -116,10 +116,24 @@ window.AstrBotPluginPage = {
             html = html.replace('href="./', 'href="/dashboard/assets/').replace('src="./', 'src="/dashboard/assets/')
             return HTMLResponse(html)
 
-        @app.get("/dashboard/graph-layout-worker.js")
-        async def graph_worker():
-            from fastapi.responses import FileResponse
-            return FileResponse(lm_dir / "pages" / "dashboard" / "graph-layout-worker.js", media_type="application/javascript")
+        @app.get("/dashboard/{filename}")
+        async def dashboard_root_file(filename: str):
+            """伺服 dashboard 根层文件（含路径穿越防护）。
+
+            HTML 里的 `./xxx` 引用已被改写到 /dashboard/assets/（走 StaticFiles
+            mount），但 Web Worker 不经过这层改写：`new Worker("./graph-layout-
+            worker.js")` 落在 /dashboard/ 根层，worker 内 `importScripts(
+            "graph-layout-core.js")` 又相对 worker URL 继续落在根层。此前只有
+            worker 文件一条单文件路由，core 没人伺服 —— worker 404 后静默死亡、
+            消息永不回传，图谱页卡在「正在生成图谱布局…」。这里按文件名兜底
+            伺服整个 dashboard 目录，未来再出现根层相对引用也不会断。
+            """
+            base = Path(dashboard_assets).resolve()
+            target = (base / filename).resolve()
+            if base not in target.parents or not target.is_file():
+                raise HTTPException(status_code=404)
+            media = "application/javascript" if target.suffix == ".js" else None
+            return FileResponse(target, media_type=media)
 
         @app.get("/health/live")
         async def live():

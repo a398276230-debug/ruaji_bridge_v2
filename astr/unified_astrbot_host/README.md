@@ -21,8 +21,8 @@ Hermes Agent ─────▶ │  ┌─────────────�
 三个插件在旧桥接里是三个独立服务（:8876 / :8877 / :8878），各自一份记忆、
 各自一个 Provider 连接池。合到一个进程里换来三件事：
 
-* **SelfLearning 能直接读 LivingMemory 的 `graph_store`**（同一个 Python 对象，
-  不是 HTTP）。`query_community_jargon` 的图谱对齐就靠这个。
+* **插件间能直接共享 `graph_store` 与 `meme_store`**（同一个 Python 对象，
+  不是 HTTP）。图谱与社区梗库的联动对齐就靠这个。
 * **一份记忆库**。`memory_scope_mode: global` 之下，群里学到的与 Hermes 记下的
   是同一批数据。
 * **一个出站连接池**。记忆摄取一次要发几十个 embedding 请求，旧实现每次
