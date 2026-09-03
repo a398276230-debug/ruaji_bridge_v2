@@ -13,7 +13,8 @@
     "shadow": "node src/index.js --mode=shadow",
     "test": "node --test --test-concurrency=1 \"tests/**/*.test.js\"",
     "replay": "node scripts/replay.js",
-    "migrate-config": "node scripts/migrate-config.js"
+    "migrate-config": "node scripts/migrate-config.js",
+    "shadow-backfill": "node scripts/shadow-learn-backfill.js"
   },
   "dependencies": {
     "ws": "^8.19.0"

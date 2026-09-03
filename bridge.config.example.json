@@ -123,6 +123,12 @@
     "apiKeyEnv": ""
   },
 
+  "shadowLearn": {
+    "enabled": false,
+    "targets": [],
+    "injectCount": 10
+  },
+
   "logging": {
     "level": "info",
     "file": "ruaji-bridge-v2.log",

@@ -58,6 +58,7 @@ const DEFAULTS = {
     legacyRoot: '..',
     affectionFile: '../affection.json',
     portrayalFile: 'data/plugin_data/portrayal/profiles.json',
+    shadowLearnFile: 'data/plugin_data/shadow_learn/learning.json',
     memeDataFile: '../memes_data.json',
     memeRoot: '../memes',
     receivedImagesDir: '../received_images',
@@ -103,6 +104,18 @@ const DEFAULTS = {
     model: '',
     baseUrl: '',
     apiKeyEnv: '',
+  },
+  /**
+   * 影子模式（学习自 astrbot_plugin_self_learning 的影子设计）：模仿指定群友说话。
+   * 注入内容与上游 build_prompt 同款：纯统计画像（句长/语气结尾/标点习惯）+
+   * 代表性例句，零 LLM 分析。与上游的两点有意偏离：语料持续滚动采集（上游
+   * 手动冻结快照）、targets 全局生效可多人（上游按群互斥单影子）。
+   * targets 非空即开始采集（先填 ID 后开开关也立刻有语料），enabled 只控制注入。
+   */
+  shadowLearn: {
+    enabled: false,
+    targets: [],
+    injectCount: 10,
   },
   logging: {
     level: 'info',
@@ -228,6 +241,7 @@ function resolvePaths(config, rootDir) {
     legacyRoot: path.resolve(rootDir, s.legacyRoot),
     affectionFile: path.resolve(rootDir, s.affectionFile),
     portrayalFile: path.resolve(rootDir, s.portrayalFile ?? 'data/plugin_data/portrayal/profiles.json'),
+    shadowLearnFile: path.resolve(rootDir, s.shadowLearnFile ?? 'data/plugin_data/shadow_learn/learning.json'),
     memeDataFile: path.resolve(rootDir, s.memeDataFile),
     memeRoot: path.resolve(rootDir, s.memeRoot),
     receivedImagesDir: path.resolve(rootDir, s.receivedImagesDir),

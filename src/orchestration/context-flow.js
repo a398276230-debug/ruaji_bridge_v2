@@ -25,6 +25,7 @@ export class ContextFlow {
    * @param {import('../storage/portrayal-store.js').PortrayalStore} [opts.portrayalStore]
    * @param {import('./portrayal-worker.js').PortrayalWorker} [opts.portrayalWorker]
    * @param {import('../storage/meme-store.js').MemeStore} [opts.memeStore]
+   * @param {import('../storage/shadow-learn-store.js').ShadowLearnStore} [opts.shadowStore]
    * @param {object} opts.config
    * @param {import('../core/logger.js').Logger} opts.logger
    */
@@ -35,6 +36,7 @@ export class ContextFlow {
     this.portrayal = opts.portrayalStore ?? null;
     this.portrayalWorker = opts.portrayalWorker ?? null;
     this.memeStore = opts.memeStore ?? null;
+    this.shadowStore = opts.shadowStore ?? null;
     this.config = opts.config;
     this.log = opts.logger?.child({ component: 'context-flow' }) ?? console;
     /** 可选：运维面板的追踪采集器，不注入就是 null，行为不变 */
@@ -101,6 +103,32 @@ export class ContextFlow {
             source: 'local-media',
             priority: 70,
             text: hint,
+            metadata: { slot: 'extra' },
+          }),
+        ];
+      },
+    });
+    // 影子模式：注入学习目标群友的语言行为档案（统计画像 + 代表性例句，
+    // 上游 build_prompt 同款）。slot 用 extra——voice 只进主人/主动接话分支，
+    // extra 才是三个分支都带的槽。
+    this.aggregator.registerLocal({
+      id: 'shadow-fewshot',
+      priority: 76,
+      collect: (input) => {
+        if (input.messageType !== MESSAGE_TYPES.GROUP) return [];
+        const cfg = this.config.shadowLearn;
+        if (!this.shadowStore || !cfg?.enabled || !Array.isArray(cfg.targets) || cfg.targets.length === 0) return [];
+        const text = this.shadowStore.renderFewShotBlock({
+          groupId: input.groupId,
+          targets: cfg.targets,
+          count: cfg.injectCount,
+        });
+        if (!text) return [];
+        return [
+          createContextBlock({
+            source: 'shadow-fewshot',
+            priority: 76,
+            text,
             metadata: { slot: 'extra' },
           }),
         ];
@@ -209,6 +237,21 @@ export class ContextFlow {
         }
       } catch (err) {
         this.log.warn('自动化画像调度异常', { error: err.message });
+      }
+    }
+
+    // 影子模式语料采集：targets 命中即收（enabled 只控制注入，不控制采集——
+    // 先填 ID 后开开关也立刻有语料）。读 config 现场，面板热改 targets 即时生效。
+    const shadowCfg = this.config.shadowLearn;
+    if (
+      this.shadowStore &&
+      Array.isArray(shadowCfg?.targets) &&
+      shadowCfg.targets.map(String).includes(String(inbound.userId))
+    ) {
+      try {
+        this.shadowStore.recordMessage(inbound.userId, inbound.sender.displayName, inbound.groupId, inbound.text);
+      } catch (err) {
+        this.log.warn('影子模式语料记录异常', { error: err.message });
       }
     }
   }

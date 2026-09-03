@@ -142,6 +142,12 @@ export function createConfigApi(deps) {
           apiKeyMasked: maskSecret(config.secrets?.portrayalApiKey),
           hasApiKey: Boolean(config.secrets?.portrayalApiKey),
         },
+        // config.shadowLearn 由 core/config.js 的默认值兜底
+        shadowLearn: {
+          enabled: Boolean(config.shadowLearn?.enabled),
+          targets: Array.isArray(config.shadowLearn?.targets) ? [...config.shadowLearn.targets] : [],
+          injectCount: config.shadowLearn?.injectCount ?? 10,
+        },
         unifiedHost: {
           baseUrl: config.unifiedHost?.baseUrl ?? 'http://127.0.0.1:8870',
         },
@@ -413,6 +419,18 @@ export function createConfigApi(deps) {
         }
       }
 
+      if (updates.shadowLearn) {
+        const prev = diskConfig.shadowLearn || {};
+        diskConfig.shadowLearn = {
+          ...prev,
+          enabled: updates.shadowLearn.enabled != null ? Boolean(updates.shadowLearn.enabled) : Boolean(prev.enabled),
+          targets: Array.isArray(updates.shadowLearn.targets)
+            ? [...new Set(updates.shadowLearn.targets.map((s) => String(s).trim()).filter(Boolean))]
+            : (prev.targets || []),
+          injectCount: Math.min(10, Math.max(1, positiveOr(updates.shadowLearn.injectCount, prev.injectCount ?? 10))),
+        };
+      }
+
       if (updates.logging) {
         diskConfig.logging = {
           ...(diskConfig.logging || {}),
@@ -465,6 +483,11 @@ export function createConfigApi(deps) {
           portrayalStore.maxRecentMessages = Math.max(50, config.portrayal.msgInterval);
           portrayalStore.blacklist = new Set((config.portrayal.blacklistUsers || []).map(String));
         }
+      }
+      // 影子模式的消费方（context-flow 采集挂钩与注入 provider）都从 config 现场读，
+      // 这里整体替换即可热生效，无需推送活实例。
+      if (diskConfig.shadowLearn) {
+        config.shadowLearn = { ...(config.shadowLearn || {}), ...diskConfig.shadowLearn };
       }
       if (diskConfig.meme) {
         config.meme = { ...(config.meme || {}), ...diskConfig.meme };

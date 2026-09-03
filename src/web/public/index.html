@@ -434,6 +434,31 @@
           </div>
         </div>
 
+        <!-- 卡片 3.5: 影子模式 · 群友说话模仿 (Shadow Learn) -->
+        <div class="cfg-card">
+          <div class="cfg-card-header">
+            <span class="cfg-icon">👻</span>
+            <h3>影子模式 · 群友说话模仿 (Shadow Learn)</h3>
+          </div>
+          <div class="cfg-card-body">
+            <div class="field-row-checks">
+              <label class="check">
+                <input type="checkbox" id="cfg-shadow-enabled"> 启用影子模式（回复时模仿目标群友的说话风格）
+              </label>
+            </div>
+            <div class="field-row">
+              <label>注入例句条数 (条)
+                <input type="number" id="cfg-shadow-inject" placeholder="10">
+                <span class="field-desc">风格档案中代表性例句的条数（1-10，默认 10）</span>
+              </label>
+              <label>学习目标群友 QQ (targets)
+                <input type="text" id="cfg-shadow-targets" placeholder="逗号或空格分隔，可多个，如: 123456, 234567">
+                <span class="field-desc">填了即开始自动收纳 TA 的群聊原话（无需先开启开关）；勾选启用后回复才注入模仿。本地统计画像 + 代表例句，零 LLM 分析</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
         <!-- 卡片 4: 主对话模型设置 -->
         <div class="cfg-card">
           <div class="cfg-card-header">

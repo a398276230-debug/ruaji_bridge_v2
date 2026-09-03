@@ -1019,6 +1019,11 @@ async function renderSettings() {
   $('#cfg-portrayal-env').value = d.config.portrayal?.apiKeyEnv ?? 'HERMES_API_KEY';
   $('#cfg-portrayal-blacklist').value = (d.config.portrayal?.blacklistUsers || []).join(', ');
 
+  // 影子模式（群友说话模仿）
+  $('#cfg-shadow-enabled').checked = Boolean(d.config.shadowLearn?.enabled);
+  $('#cfg-shadow-inject').value = d.config.shadowLearn?.injectCount ?? 10;
+  $('#cfg-shadow-targets').value = (d.config.shadowLearn?.targets || []).join(', ');
+
   // 4. 主对话模型
   $('#cfg-model-base-url').value = d.config.model?.baseUrl ?? '';
   $('#cfg-model-name').value = d.config.model?.model ?? '';
@@ -1087,6 +1092,12 @@ async function saveSettings() {
       .map((s) => s.trim())
       .filter(Boolean);
 
+    const rawShadowTargets = $('#cfg-shadow-targets').value;
+    const shadowTargets = rawShadowTargets
+      .split(/[,，\s]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
     const payload = {
       mode: $('#cfg-mode').value,
       identity: {
@@ -1135,6 +1146,11 @@ async function saveSettings() {
         model: $('#cfg-portrayal-model').value.trim(),
         baseUrl: $('#cfg-portrayal-url').value.trim(),
         apiKeyEnv: $('#cfg-portrayal-env').value.trim(),
+      },
+      shadowLearn: {
+        enabled: $('#cfg-shadow-enabled').checked,
+        targets: shadowTargets,
+        injectCount: Number($('#cfg-shadow-inject').value) || 10,
       },
       decision: {
         debounceMs: Number($('#cfg-decision-debounce').value) || 800,

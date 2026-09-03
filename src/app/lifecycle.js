@@ -165,6 +165,7 @@ export class Lifecycle {
     try { await this.c.mem0Ingestor?.stop(); } catch { /* ignore */ }
     try { this.c.affectionStore.flush(); } catch { /* ignore */ }
     try { this.c.portrayalStore.flush(); } catch { /* ignore */ }
+    try { this.c.shadowLearnStore?.flush(); } catch { /* ignore */ }
     try { this.c.pluginRegistry.shutdown(); } catch { /* ignore */ }
     try { await this.c.webServer?.close(); } catch { /* ignore */ }
     try { await this.c.health.close(); } catch { /* ignore */ }

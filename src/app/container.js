@@ -30,6 +30,7 @@ import { OpenAiCompatibleAdapter } from '../adapters/model/openai-compatible.js'
 import { AffectionStore } from '../storage/affection-store.js';
 import { PortrayalStore } from '../storage/portrayal-store.js';
 import { MemeStore } from '../storage/meme-store.js';
+import { ShadowLearnStore } from '../storage/shadow-learn-store.js';
 import { SessionStore } from '../storage/session-store.js';
 import { DedupStore } from '../storage/dedup-store.js';
 import { SendQueueStore } from '../storage/send-queue-store.js';
@@ -90,6 +91,11 @@ export function createContainer(config, overrides = {}) {
     memeRoot: config.paths.memeRoot,
     logger,
     config,
+  });
+  const shadowLearnStore = new ShadowLearnStore({
+    file: config.paths.shadowLearnFile,
+    persistEnabled: config.reply.sideEffectsEnabled,
+    logger,
   });
   const sessionStore = new SessionStore({
     windowSize: config.decision.localWindowSize,
@@ -202,6 +208,7 @@ export function createContainer(config, overrides = {}) {
     portrayalStore,
     portrayalWorker,
     memeStore,
+    shadowStore: shadowLearnStore,
     config,
     logger,
     traceCollector,
@@ -292,6 +299,7 @@ export function createContainer(config, overrides = {}) {
     affectionStore,
     portrayalStore,
     memeStore,
+    shadowLearnStore,
     sessionStore,
     modelSessionStore,
     dedupStore,
