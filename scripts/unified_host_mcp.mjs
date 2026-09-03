@@ -6,7 +6,7 @@
  * 路由逻辑:
  *   - OneBot 协议工具 (21 个): 由 Bridge 本地 OneBotToolsExecutor 直连 NapCat 执行，零延迟、高稳定性
  *   - 记忆与知识图谱工具 (4 个): 转发至 Python 统一宿主 http://127.0.0.1:8870/api/v1/tools/call
- *   - tools/list: 动态合并两端清单，完整暴露 25 个 MCP 工具
+ *   - tools/list: 动态合并两端清单，完整暴露 24 个 MCP 工具
  */
 
 import { createInterface } from 'node:readline'
@@ -14,7 +14,6 @@ import { readFileSync, existsSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { OneBotToolsExecutor, ONEBOT_TOOLS_MANIFEST } from '../src/tools/onebot-tools.js'
-import { BridgeToolsExecutor, BRIDGE_TOOLS_MANIFEST } from '../src/tools/bridge-tools.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const HOST_BASE_URL = process.env.UNIFIED_HOST_URL || 'http://127.0.0.1:8870'
@@ -22,7 +21,6 @@ const TOOLS_MANIFEST_FALLBACK = process.env.UNIFIED_HOST_MANIFEST || 'F:/hermes-
 const PROTOCOL_VERSION = '2024-11-05'
 
 const onebotExecutor = new OneBotToolsExecutor()
-const bridgeExecutor = new BridgeToolsExecutor()
 
 async function fetchHostManifest() {
   try {
@@ -54,8 +52,8 @@ async function getCombinedToolsList() {
   const hostTools = hostManifest.tools || []
 
   const map = new Map()
-  // 清单顺序必须与 callTool 的分发顺序一致：OneBot > Bridge > 宿主。
-  // 三层都用 !map.has 守卫，同名工具一律先注册者胜，避免"列出的"和"执行的"是两个。
+  // 清单顺序必须与 callTool 的分发顺序一致：OneBot > 宿主。
+  // 两层都用 !map.has 守卫，同名工具一律先注册者胜，避免"列出的"和"执行的"是两个。
   // 1. 先载入 OneBot 原生工具清单
   for (const t of ONEBOT_TOOLS_MANIFEST) {
     if (!map.has(t.name)) {
@@ -67,18 +65,7 @@ async function getCombinedToolsList() {
     }
   }
 
-  // 2. 载入 Bridge 本地自有工具清单 (如 search_memes)
-  for (const t of BRIDGE_TOOLS_MANIFEST) {
-    if (!map.has(t.name)) {
-      map.set(t.name, {
-        name: t.name,
-        description: t.description || '',
-        inputSchema: t.parameters || { type: 'object', properties: {} },
-      })
-    }
-  }
-
-  // 3. 载入宿主记忆/图谱工具
+  // 2. 载入宿主记忆/图谱工具
   for (const t of hostTools) {
     if (!map.has(t.name)) {
       map.set(t.name, {
@@ -98,12 +85,7 @@ async function callTool(name, args) {
     return await onebotExecutor.execute(name, args)
   }
 
-  // 2. Bridge 本地自有工具执行
-  if (bridgeExecutor.isSupported(name)) {
-    return await bridgeExecutor.execute(name, args)
-  }
-
-  // 3. 记忆/图谱工具转发至统一宿主
+  // 2. 记忆/图谱工具转发至统一宿主
   try {
     const res = await fetch(`${HOST_BASE_URL}/api/v1/tools/call`, {
       method: 'POST',

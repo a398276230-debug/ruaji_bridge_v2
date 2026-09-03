@@ -998,6 +998,25 @@ async function renderSettings() {
     ? '已配置独立密钥（留空或掩码保持不变）'
     : `未配置独立 Key（优先读取环境变量 ${esc(d.config.meme?.visionKeyEnv || 'CPA_API_KEY')}）`;
 
+  // 2.5 后置表情匹配
+  $('#cfg-meme-matcher-enabled').checked = d.config.meme?.matcherEnabled !== false;
+  $('#cfg-meme-matcher-url').value = d.config.meme?.matcherBaseUrl ?? '';
+  $('#cfg-meme-matcher-model').value = d.config.meme?.matcherModel ?? '';
+  $('#cfg-meme-matcher-key').value = d.config.meme?.matcherKeyMasked ?? '';
+  $('#cfg-meme-matcher-env').value = d.config.meme?.matcherKeyEnv ?? '';
+  $('#cfg-meme-matcher-key-desc').textContent = d.config.meme?.hasMatcherKey
+    ? '已配置独立密钥（留空或掩码保持不变）'
+    : '未配置独立 Key（回落复用识图密钥）';
+  $('#cfg-meme-matcher-url').placeholder = d.config.meme?.matcherEffectiveBaseUrl
+    ? `当前生效: ${d.config.meme.matcherEffectiveBaseUrl}`
+    : '留空 = 复用上方识图 API';
+  $('#cfg-meme-matcher-model').placeholder = d.config.meme?.matcherEffectiveModel
+    ? `当前生效: ${d.config.meme.matcherEffectiveModel}`
+    : '留空 = 复用上方识图模型';
+  $('#cfg-meme-matcher-timeout').value = d.config.meme?.matcherTimeoutMs ?? 10000;
+  $('#cfg-meme-matcher-retries').value = d.config.meme?.matcherMaxRetries ?? 2;
+  $('#cfg-meme-matcher-candidates').value = d.config.meme?.matcherCandidateCount ?? 10;
+
   // 3. 社区梗库梗雷达 —— 这三项的真源是统一宿主的 config.yaml，不是桥接配置，
   // 所以单独取一次；宿主没起来就把整张卡片禁掉，免得用户白填。
   try {
@@ -1136,6 +1155,14 @@ async function saveSettings() {
         visionModel: $('#cfg-meme-vision-model').value.trim(),
         visionKey: $('#cfg-meme-vision-key').value.trim(),
         visionKeyEnv: $('#cfg-meme-vision-env').value.trim(),
+        matcherEnabled: $('#cfg-meme-matcher-enabled').checked,
+        matcherBaseUrl: $('#cfg-meme-matcher-url').value.trim(),
+        matcherModel: $('#cfg-meme-matcher-model').value.trim(),
+        matcherKey: $('#cfg-meme-matcher-key').value.trim(),
+        matcherKeyEnv: $('#cfg-meme-matcher-env').value.trim(),
+        matcherTimeoutMs: Number($('#cfg-meme-matcher-timeout').value) || 10000,
+        matcherMaxRetries: Number($('#cfg-meme-matcher-retries').value),
+        matcherCandidateCount: Number($('#cfg-meme-matcher-candidates').value) || 10,
       },
       portrayal: {
         enabled: $('#cfg-portrayal-enabled').checked,
@@ -1208,17 +1235,34 @@ async function saveSettings() {
 }
 
 async function testModelConnection(type) {
-  const btn = type === 'vision' ? $('#cfg-test-vision-btn') : $('#cfg-test-model-btn');
-  const resEl = type === 'vision' ? $('#cfg-test-vision-res') : $('#cfg-test-model-res');
+  const btns = {
+    vision: { btn: $('#cfg-test-vision-btn'), res: $('#cfg-test-vision-res') },
+    matcher: { btn: $('#cfg-test-matcher-btn'), res: $('#cfg-test-matcher-res') },
+    main: { btn: $('#cfg-test-model-btn'), res: $('#cfg-test-model-res') },
+  };
+  const pick = btns[type] ?? btns.main;
+  const btn = pick.btn;
+  const resEl = pick.res;
 
   btn.disabled = true;
   resEl.className = 'test-status loading';
   resEl.textContent = '⏳ 测试中…';
 
   try {
-    const baseUrl = type === 'vision' ? $('#cfg-meme-vision-url').value.trim() : $('#cfg-model-base-url').value.trim();
-    const model = type === 'vision' ? $('#cfg-meme-vision-model').value.trim() : $('#cfg-model-name').value.trim();
-    const apiKey = type === 'vision' ? $('#cfg-meme-vision-key').value.trim() : $('#cfg-model-key').value.trim();
+    let baseUrl;
+    let model;
+    let apiKey;
+    if (type === 'vision' || type === 'matcher') {
+      // matcher 字段留空时回落 vision 字段（与运行时回落逻辑一致）
+      const prefix = type === 'matcher' ? '#cfg-meme-matcher-' : '#cfg-meme-vision-';
+      baseUrl = $(`${prefix}url`).value.trim() || $('#cfg-meme-vision-url').value.trim();
+      model = $(`${prefix}model`).value.trim() || $('#cfg-meme-vision-model').value.trim();
+      apiKey = $(`${prefix}key`).value.trim() || $('#cfg-meme-vision-key').value.trim();
+    } else {
+      baseUrl = $('#cfg-model-base-url').value.trim();
+      model = $('#cfg-model-name').value.trim();
+      apiKey = $('#cfg-model-key').value.trim();
+    }
 
     const data = await api('/api/config/test-model', {
       method: 'POST',
@@ -1542,6 +1586,7 @@ function bind() {
   };
   $('#cfg-save').onclick = saveSettings;
   $('#cfg-test-vision-btn').onclick = () => testModelConnection('vision');
+  $('#cfg-test-matcher-btn').onclick = () => testModelConnection('matcher');
   $('#cfg-test-model-btn').onclick = () => testModelConnection('main');
 }
 

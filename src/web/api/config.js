@@ -4,7 +4,7 @@
  * 职责：
  * 1. GET /api/config：读取当前桥接的完整配置、脱敏后的密钥状态及相关元数据
  * 2. PUT /api/config：校验并持久化客制化配置至 bridge.config.json，同步热更新运行时状态
- * 3. POST /api/config/test-model：测试主对话模型或表情包视觉模型的连通性与延迟
+ * 3. POST /api/config/test-model：测试主对话模型、表情包视觉模型或后置匹配模型的连通性与延迟
  */
 
 import fs from 'node:fs';
@@ -15,6 +15,13 @@ function positiveOr(value, fallback) {
   if (value == null) return fallback;
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/** 整数钳制到 [min, max]，非法（NaN/非整数）时回落到 fallback */
+function clampInt(value, min, max, fallback) {
+  if (value == null) return fallback;
+  const n = Number(value);
+  return Number.isInteger(n) ? Math.min(max, Math.max(min, n)) : fallback;
 }
 
 function maskSecret(str) {
@@ -128,6 +135,18 @@ export function createConfigApi(deps) {
           visionKeyEnv: config.meme?.visionKeyEnv ?? 'CPA_API_KEY',
           visionKeyMasked: maskSecret(config.secrets?.memeVisionApiKey || rawConfig.meme?.visionKey),
           hasVisionKey: Boolean(config.secrets?.memeVisionApiKey || rawConfig.meme?.visionKey),
+          // 后置表情匹配（matcher* 留空时回落 vision*）
+          matcherEnabled: config.meme?.matcherEnabled === true,
+          matcherBaseUrl: config.meme?.matcherBaseUrl ?? '',
+          matcherModel: config.meme?.matcherModel ?? '',
+          matcherKeyEnv: config.meme?.matcherKeyEnv ?? '',
+          matcherKeyMasked: maskSecret(config.secrets?.memeMatcherApiKey || rawConfig.meme?.matcherKey),
+          hasMatcherKey: Boolean(config.secrets?.memeMatcherApiKey || rawConfig.meme?.matcherKey),
+          matcherTimeoutMs: config.meme?.matcherTimeoutMs ?? 10000,
+          matcherMaxRetries: config.meme?.matcherMaxRetries ?? 2,
+          matcherCandidateCount: config.meme?.matcherCandidateCount ?? 10,
+          matcherEffectiveBaseUrl: config.meme?.matcherBaseUrl || config.meme?.visionBaseUrl || '',
+          matcherEffectiveModel: config.meme?.matcherModel || config.meme?.visionModel || 'gpt-4o-mini',
         },
         // config.portrayal 由 core/config.js 的默认值兜底，这里不再重复硬编码
         portrayal: {
@@ -268,6 +287,18 @@ export function createConfigApi(deps) {
         if (!updates.napcat.httpUrl) errors.push('NapCat HTTP URL 不能为空');
       }
 
+      if (updates.meme) {
+        if (updates.meme.matcherTimeoutMs != null && !positiveOr(updates.meme.matcherTimeoutMs, 0)) {
+          errors.push(`后置匹配超时 非法: ${updates.meme.matcherTimeoutMs}（应为正整数毫秒）`);
+        }
+        if (updates.meme.matcherMaxRetries != null && clampInt(updates.meme.matcherMaxRetries, 0, 5, null) == null) {
+          errors.push(`后置匹配重试次数 非法: ${updates.meme.matcherMaxRetries}（应为 0-5 的整数）`);
+        }
+        if (updates.meme.matcherCandidateCount != null && clampInt(updates.meme.matcherCandidateCount, 1, 20, null) == null) {
+          errors.push(`后置匹配候选数 非法: ${updates.meme.matcherCandidateCount}（应为 1-20 的整数）`);
+        }
+      }
+
       if (errors.length > 0) {
         return { status: 400, body: { error: errors.join('; ') } };
       }
@@ -350,6 +381,20 @@ export function createConfigApi(deps) {
             mem.visionKey = updates.meme.visionKey.trim();
           }
         }
+        // 后置表情匹配字段：enabled/retries/candidates/timeout 热生效；
+        // 端点/模型/key 改动落盘后需重启（adapter 在构造期取值）
+        if (updates.meme.matcherEnabled != null) mem.matcherEnabled = Boolean(updates.meme.matcherEnabled);
+        if (updates.meme.matcherBaseUrl !== undefined) mem.matcherBaseUrl = String(updates.meme.matcherBaseUrl).trim();
+        if (updates.meme.matcherModel !== undefined) mem.matcherModel = String(updates.meme.matcherModel).trim();
+        if (updates.meme.matcherKeyEnv) mem.matcherKeyEnv = updates.meme.matcherKeyEnv.trim();
+        if (updates.meme.matcherKey !== undefined) {
+          if (!isMasked(updates.meme.matcherKey)) {
+            mem.matcherKey = updates.meme.matcherKey.trim();
+          }
+        }
+        if (updates.meme.matcherTimeoutMs != null) mem.matcherTimeoutMs = positiveOr(updates.meme.matcherTimeoutMs, 10000);
+        if (updates.meme.matcherMaxRetries != null) mem.matcherMaxRetries = clampInt(updates.meme.matcherMaxRetries, 0, 5, 2);
+        if (updates.meme.matcherCandidateCount != null) mem.matcherCandidateCount = clampInt(updates.meme.matcherCandidateCount, 1, 20, 10);
         diskConfig.meme = mem;
       }
 
@@ -512,10 +557,16 @@ export function createConfigApi(deps) {
     },
 
     'POST /api/config/test-model': async ({ body }) => {
-      const type = body?.type || 'main'; // 'main' | 'vision'
-      const baseUrl = String(body?.baseUrl || '').trim().replace(/\/+$/, '');
-      const model = String(body?.model || '').trim();
+      const type = body?.type || 'main'; // 'main' | 'vision' | 'matcher'
+      let baseUrl = String(body?.baseUrl || '').trim().replace(/\/+$/, '');
+      let model = String(body?.model || '').trim();
       let apiKey = String(body?.apiKey || '').trim();
+
+      // matcher：body 字段留空时回落 vision 字段（与运行时回落逻辑一致）
+      if (type === 'matcher') {
+        if (!baseUrl) baseUrl = String(config.meme?.visionBaseUrl || '').trim().replace(/\/+$/, '');
+        if (!model) model = String(config.meme?.visionModel || '').trim();
+      }
 
       if (!baseUrl) return { status: 400, body: { error: '缺少 baseUrl' } };
       if (!model) return { status: 400, body: { error: '缺少 model 名称' } };
@@ -523,6 +574,8 @@ export function createConfigApi(deps) {
       if (isMasked(apiKey) || !apiKey) {
         if (type === 'main') {
           apiKey = config.secrets?.modelApiKey || '';
+        } else if (type === 'matcher') {
+          apiKey = config.secrets?.memeMatcherApiKey || config.meme?.matcherKey || config.meme?.visionKey || '';
         } else {
           apiKey = config.secrets?.memeVisionApiKey || config.meme?.visionKey || '';
         }

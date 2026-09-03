@@ -109,7 +109,15 @@
     "visionBaseUrl": "http://127.0.0.1:8317/v1",
     "visionModel": "gpt-4o-mini",
     "visionKeyEnv": "CPA_API_KEY",
-    "visionKey": ""
+    "visionKey": "",
+    "matcherEnabled": true,
+    "matcherBaseUrl": "",
+    "matcherModel": "",
+    "matcherKeyEnv": "",
+    "matcherKey": "",
+    "matcherTimeoutMs": 10000,
+    "matcherMaxRetries": 2,
+    "matcherCandidateCount": 10
   },
 
   "portrayal": {

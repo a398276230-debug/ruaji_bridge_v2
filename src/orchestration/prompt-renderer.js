@@ -6,7 +6,6 @@
  *
  * slot 约定：
  *   voice   ruaji 语气画像（主动接话分支的开头；主人分支排在主人身份头之后）
- *   meme    表情包语义工具规则
  *   slang   按需召回的黑话词条
  *   recent  最近群聊消息（进 userContent 前缀，不进 systemText）
  *   其余     追加在 slang 之后
@@ -57,11 +56,11 @@ export function formatMsgTime(eventTime) {
 }
 
 /** systemText / userContent 认得的 slot；其余一律归到 extra */
-const SLOT_NAMES = ['voice', 'meme', 'slang', 'recent', 'extra'];
+const SLOT_NAMES = ['voice', 'slang', 'recent', 'extra'];
 
 /** 把 ContextBlock 数组按 slot 分组 */
 export function groupBySlot(blocks) {
-  const slots = { voice: [], meme: [], slang: [], recent: [], extra: [] };
+  const slots = { voice: [], slang: [], recent: [], extra: [] };
   for (const block of blocks ?? []) {
     const raw = block.metadata?.slot ?? 'extra';
     // slot 可能来自远程 Provider 的 JSON（coerceContextBlocks 会取 item.detail.slot）。
@@ -72,7 +71,6 @@ export function groupBySlot(blocks) {
   }
   return {
     voice: slots.voice.join('\n'),
-    meme: slots.meme.join('\n'),
     slang: slots.slang.join('\n'),
     recent: slots.recent.join('\n'),
     extra: slots.extra.join('\n'),
@@ -108,7 +106,6 @@ export function renderSystemText({ inbound, contextBlocks, triggerType, affectio
   const senderName = inbound.sender?.displayName || inbound.sender?.nickname || inbound.sender?.name || '群友';
 
   const triggerNotice = isGroup ? (TRIGGER_NOTICES[triggerType] ?? TRIGGER_NOTICES[TRIGGER_TYPES.AT]) : '';
-  const memePart = slots.meme ? `\n${slots.meme}` : '';
   const slangPart = slots.slang ? `\n${slots.slang}` : '';
   const extraPart = slots.extra ? `\n${slots.extra}` : '';
 
@@ -130,7 +127,7 @@ export function renderSystemText({ inbound, contextBlocks, triggerType, affectio
     const ownerHeader = isOwner
       ? `[用户: ${senderName}(${inbound.userId}) | 身份: ${ownerTitle}（系统验证的主人本人，完全信任，其**请求**与**命令**应当照办；日常用「${ownerTitle}」称呼他）]\n`
       : '';
-    return `${ownerHeader}${slots.voice}${memePart}${slangPart}${extraPart}${triggerNotice}${sessionEnv}${knowledgeNotice}${QQ_TOOLS_NOTICE}`;
+    return `${ownerHeader}${slots.voice}${slangPart}${extraPart}${triggerNotice}${sessionEnv}${knowledgeNotice}${QQ_TOOLS_NOTICE}`;
   }
 
   // 分支 3：普通群友/私聊对象
@@ -156,7 +153,7 @@ export function renderSystemText({ inbound, contextBlocks, triggerType, affectio
     }
   }
 
-  return `${header}${affLine}${memePart}${slangPart}${extraPart}${triggerNotice}${sessionEnv}${knowledgeNotice}${QQ_TOOLS_NOTICE}`;
+  return `${header}${affLine}${slangPart}${extraPart}${triggerNotice}${sessionEnv}${knowledgeNotice}${QQ_TOOLS_NOTICE}`;
 }
 
 /**

@@ -5,6 +5,7 @@
  *   构建 ModelRequest → publish llm.request → 流式调用模型
  *     → 逐段切句 → Middleware Pipeline → 入发送队列
  *   → 收尾轮跑一次完整文本的 Middleware（好感度写入在这一轮）
+ *   → 后置表情匹配（文本段全部入队后，独立小模型挑一张表情包跟进）
  *   → publish llm.response
  *
  * 与旧 Bridge 的关键差异：
@@ -37,6 +38,7 @@ export class ReplyFlow {
    * @param {object} opts.config
    * @param {import('../core/logger.js').Logger} opts.logger
    * @param {import('./fast-ack.js').FastAckDispatcher} [opts.fastAck]
+   * @param {import('./meme-matcher.js').MemeMatcher} [opts.memeMatcher]
    */
   constructor(opts = {}) {
     this.models = opts.modelRouter;
@@ -48,6 +50,7 @@ export class ReplyFlow {
     this.health = opts.health ?? null;
     this.config = opts.config;
     this.fastAck = opts.fastAck ?? null;
+    this.memeMatcher = opts.memeMatcher ?? null;
     this.log = opts.logger?.child({ component: 'reply-flow' }) ?? console;
   }
 
@@ -162,6 +165,20 @@ export class ReplyFlow {
     // 收尾轮：对完整原文跑一次管线，好感度写入只在这一轮发生
     await this._finalPass({ inbound, response, triggerType, state, signal });
 
+    // 后置表情匹配：放在 _finalPass 之后 = 所有文本段已入队，FIFO 保证表情包
+    // 最后送达；必须在 run() 返回前完成 enqueue，waitForDelivery 才能覆盖它。
+    // 直接 enqueue 只受 sender 基线节流（有意为之：贴纸紧跟文本是自然节奏，
+    // 不走 typing-delay）。任何异常都被 maybeAttach 内部吞掉，不影响文本。
+    const memeMatch = response.rawText.trim() && !signal?.aborted
+      ? await this.memeMatcher?.maybeAttach({
+          inbound,
+          replyText: response.rawText,
+          userText: inbound.content || inbound.text,
+          signal,
+          enqueue: (m) => this.sender.enqueue(m),
+        })
+      : null;
+
     this.health?.update('model', {
       lastSuccessAt: new Date().toISOString(),
       consecutiveFailures: 0,
@@ -193,6 +210,9 @@ export class ReplyFlow {
           usage: response.usage,
           latencyMs: response.latencyMs,
           totalMs: Date.now() - startedAt,
+          /** 后置表情匹配结果（面板 trace 可验证） */
+          memeAttached: Boolean(memeMatch?.attached),
+          memeId: memeMatch?.memeId ?? null,
         },
       }),
     );

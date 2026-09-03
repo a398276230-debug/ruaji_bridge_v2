@@ -39,6 +39,7 @@ import { buildMiddlewarePipeline } from '../middleware/index.js';
 import { DecisionFlow } from '../orchestration/decision-flow.js';
 import { ContextFlow } from '../orchestration/context-flow.js';
 import { PortrayalWorker } from '../orchestration/portrayal-worker.js';
+import { MemeMatcher } from '../orchestration/meme-matcher.js';
 import { ReplyFlow } from '../orchestration/reply-flow.js';
 import { CommandFlow } from '../orchestration/command-flow.js';
 import { InboundFlow } from '../orchestration/inbound-flow.js';
@@ -193,6 +194,40 @@ export function createContainer(config, overrides = {}) {
     logger,
   });
 
+  // 后置表情匹配：可单独指一个轻量 endpoint；matcherBaseUrl 留空则回落视觉打标端点。
+  // 走 ModelRouter 的 addRule 按 sessionKey 前缀分流（见 meme-matcher 的请求构造）。
+  // 只要有效端点非空就无条件注册：面板热切换 matcherEnabled 立即生效，无需重启。
+  const memeMatcherBaseUrl = String(config.meme?.matcherBaseUrl || config.meme?.visionBaseUrl || '').trim();
+  if (memeMatcherBaseUrl) {
+    const memeMatcherAdapter = overrides.memeMatcherAdapter ?? new OpenAiCompatibleAdapter({
+      baseUrl: memeMatcherBaseUrl,
+      model: config.meme.matcherModel || config.meme.visionModel,
+      apiKey: config.secrets?.memeMatcherApiKey ?? '',
+      sessionHeader: config.model.sessionHeader,
+      sessionPrefix: config.model.sessionPrefix,
+      sessionCutoffHour: config.model.sessionCutoffHour,
+      sessionRotationsPerDay: config.model.sessionRotationsPerDay,
+      sessionStore: modelSessionStore,
+      timeoutMs: config.meme.matcherTimeoutMs,
+      // 语义重试（烂 JSON / 捏造 ID 的带反馈重试）由 MemeMatcher 自己管
+      maxRetries: 0,
+      logger,
+      fetchImpl,
+    });
+    modelRouter.addRule((req) => (String(req.sessionKey ?? '').startsWith('memematch_') ? memeMatcherAdapter : null));
+    logger.info('后置表情匹配已启用独立模型通道', {
+      baseUrl: memeMatcherBaseUrl,
+      model: config.meme.matcherModel || config.meme.visionModel,
+    });
+  }
+
+  const memeMatcher = new MemeMatcher({
+    models: modelRouter,
+    memeStore,
+    config,
+    logger,
+  });
+
   // ===== 编排 =====
   const contextAggregator = new ContextAggregator({
     capabilityBus,
@@ -207,7 +242,6 @@ export function createContainer(config, overrides = {}) {
     affectionStore,
     portrayalStore,
     portrayalWorker,
-    memeStore,
     shadowStore: shadowLearnStore,
     config,
     logger,
@@ -233,6 +267,7 @@ export function createContainer(config, overrides = {}) {
     config,
     logger,
     fastAck,
+    memeMatcher,
   });
   const decisionFlow = new DecisionFlow({
     capabilityBus,
@@ -319,6 +354,7 @@ export function createContainer(config, overrides = {}) {
     replyFlow,
     commandFlow,
     portrayalWorker,
+    memeMatcher,
     inboundFlow,
     fastAck,
     mem0Ingestor,

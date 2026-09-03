@@ -93,6 +93,19 @@ const DEFAULTS = {
     visionModel: 'gpt-4o-mini',
     visionKeyEnv: 'CPA_API_KEY',
     visionKey: '',
+    /**
+     * 后置表情匹配：主模型回复完成后，桥接用独立小模型挑一张表情包跟进。
+     * matcherBaseUrl / matcherModel / key 留空时回落上面的 vision* 同款小模型。
+     * enabled / retries / candidates 热生效；端点 / 模型 / key / 超时改动需重启。
+     */
+    matcherEnabled: true,
+    matcherBaseUrl: '',
+    matcherModel: '',
+    matcherKeyEnv: '',
+    matcherKey: '',
+    matcherTimeoutMs: 10000,
+    matcherMaxRetries: 2,
+    matcherCandidateCount: 10,
   },
   portrayal: {
     enabled: true,
@@ -170,6 +183,8 @@ const ENV_OVERRIDES = [
   ['RUAJI_V2_ROBOT_ID', 'identity.robotId', String],
   ['RUAJI_V2_MEME_VISION_BASE_URL', 'meme.visionBaseUrl', String],
   ['RUAJI_V2_MEME_VISION_MODEL', 'meme.visionModel', String],
+  ['RUAJI_V2_MEME_MATCHER_BASE_URL', 'meme.matcherBaseUrl', String],
+  ['RUAJI_V2_MEME_MATCHER_MODEL', 'meme.matcherModel', String],
 ];
 
 function toBool(v) {
@@ -224,6 +239,13 @@ export function loadConfig({ rootDir, file = 'bridge.config.json', env = process
     napcatAccessToken: env[config.napcat.accessTokenEnv] || fileConfig?.napcat?.accessToken || '',
     modelApiKey: env[config.model.apiKeyEnv] || fileConfig?.model?.apiKey || '',
     memeVisionApiKey: (config.meme?.visionKeyEnv ? env[config.meme.visionKeyEnv] : '') || fileConfig?.meme?.visionKey || '',
+    // matcher key 同理回落 vision key：端点共用时密钥也共用
+    memeMatcherApiKey:
+      (config.meme?.matcherKeyEnv ? env[config.meme.matcherKeyEnv] : '')
+      || fileConfig?.meme?.matcherKey
+      || (config.meme?.visionKeyEnv ? env[config.meme.visionKeyEnv] : '')
+      || fileConfig?.meme?.visionKey
+      || '',
     portrayalApiKey: (config.portrayal?.apiKeyEnv ? env[config.portrayal.apiKeyEnv] : '') || fileConfig?.portrayal?.apiKey || '',
   };
 

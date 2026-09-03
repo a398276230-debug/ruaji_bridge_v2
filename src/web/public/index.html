@@ -357,6 +357,60 @@
           </div>
         </div>
 
+        <!-- 卡片 2.5: 后置表情匹配 (Meme Matcher) -->
+        <div class="cfg-card">
+          <div class="cfg-card-header">
+            <span class="cfg-icon">🎯</span>
+            <h3>后置表情匹配 (Meme Matcher)</h3>
+          </div>
+          <div class="cfg-card-body">
+            <div class="field-row-checks">
+              <label class="check">
+                <input type="checkbox" id="cfg-meme-matcher-enabled" checked> 启用后置表情匹配
+              </label>
+            </div>
+            <span class="field-desc">回复文本发出后，由独立小模型从表情库挑一张最合适的表情包单独跟进。<strong>启用/重试/候选数保存即热生效；端点、模型、Key、超时改动需重启桥接。</strong></span>
+            <div class="field-row">
+              <label>匹配模型 API Base URL
+                <input type="text" id="cfg-meme-matcher-url" placeholder="留空 = 复用上方识图 API">
+                <span class="field-desc">留空时回落识图 API 端点（视觉打标同款小模型）</span>
+              </label>
+              <label>匹配模型名称
+                <input type="text" id="cfg-meme-matcher-model" placeholder="留空 = 复用上方识图模型" list="preset-vision-models">
+                <span class="field-desc">建议用快速轻量级模型；留空则复用识图模型</span>
+              </label>
+            </div>
+            <div class="field-row">
+              <label>匹配 API Key
+                <input type="password" id="cfg-meme-matcher-key" placeholder="留空或掩码保持不变">
+                <span class="field-desc" id="cfg-meme-matcher-key-desc">未配置独立 Key 时复用识图密钥</span>
+              </label>
+              <label>环境变量引用名
+                <input type="text" id="cfg-meme-matcher-env" placeholder="留空 = 复用识图密钥的环境变量">
+                <span class="field-desc">优先从指定环境变量读取密钥</span>
+              </label>
+            </div>
+            <div class="field-row">
+              <label>单次调用超时 (毫秒)
+                <input type="number" id="cfg-meme-matcher-timeout" min="1000" step="500" placeholder="10000">
+                <span class="field-desc">匹配模型 API 的超时时间</span>
+              </label>
+              <label>无效输出重试上限
+                <input type="number" id="cfg-meme-matcher-retries" min="0" max="5" step="1" placeholder="2">
+                <span class="field-desc">仅对烂 JSON / 捏造 ID 重试（共 attempts+1 次尝试）</span>
+              </label>
+              <label>喂给匹配器的候选数
+                <input type="number" id="cfg-meme-matcher-candidates" min="1" max="20" step="1" placeholder="10">
+                <span class="field-desc">候选表情包数量上限（1-20，默认 10）</span>
+              </label>
+            </div>
+            <div class="test-action-bar">
+              <button class="btn secondary" id="cfg-test-matcher-btn" type="button">⚡ 测试匹配模型连通性</button>
+              <span class="test-status" id="cfg-test-matcher-res"></span>
+            </div>
+          </div>
+        </div>
+
         <!-- 卡片 3: 社区梗库梗雷达 -->
         <div class="cfg-card">
           <div class="cfg-card-header">

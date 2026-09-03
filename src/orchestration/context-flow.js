@@ -4,7 +4,7 @@
  * 把三条旧路径合并成一次聚合：
  *   GCP 远程上下文（HTTP Provider，manifest 注册）
  *   本地滑窗兜底（local provider，优先级低于 GCP）
- *   语气画像 / 黑话 / 表情包规则（local provider，进 systemText 的不同 slot）
+ *   语气画像 / 黑话（local provider，进 systemText 的不同 slot）
  *
  * 关键差异：旧 Bridge 是 "GCP 可用就用 GCP，否则用本地"（bridge.js:1695 的
  * 三元表达式）。v2 交给 ContextAggregator 按 priority + 去重 + 预算统一决策，
@@ -24,7 +24,6 @@ export class ContextFlow {
    * @param {import('../storage/affection-store.js').AffectionStore} opts.affectionStore
    * @param {import('../storage/portrayal-store.js').PortrayalStore} [opts.portrayalStore]
    * @param {import('./portrayal-worker.js').PortrayalWorker} [opts.portrayalWorker]
-   * @param {import('../storage/meme-store.js').MemeStore} [opts.memeStore]
    * @param {import('../storage/shadow-learn-store.js').ShadowLearnStore} [opts.shadowStore]
    * @param {object} opts.config
    * @param {import('../core/logger.js').Logger} opts.logger
@@ -35,7 +34,6 @@ export class ContextFlow {
     this.affection = opts.affectionStore;
     this.portrayal = opts.portrayalStore ?? null;
     this.portrayalWorker = opts.portrayalWorker ?? null;
-    this.memeStore = opts.memeStore ?? null;
     this.shadowStore = opts.shadowStore ?? null;
     this.config = opts.config;
     this.log = opts.logger?.child({ component: 'context-flow' }) ?? console;
@@ -45,24 +43,6 @@ export class ContextFlow {
   }
 
   _registerLocalProviders() {
-    // 表情包语义工具规则：指导模型调用 search_memes 工具与输出 &&meme:ID&&
-    this.aggregator.registerLocal({
-      id: 'meme-rules',
-      priority: 75,
-      collect: () => {
-        const text = this.memeStore?.getSemanticToolPrompt?.();
-        if (!text) return [];
-        return [
-          createContextBlock({
-            source: 'meme-rules',
-            priority: 75,
-            text,
-            metadata: { slot: 'meme' },
-          }),
-        ];
-      },
-    });
-
     // 本地群聊滑窗：GCP 不可用时的兜底，优先级低于远程（远程 90）
     this.aggregator.registerLocal({
       id: 'local-window',

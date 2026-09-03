@@ -128,8 +128,6 @@ uaji_bridge_v2\scripts\unified_host_mcp.mjs
     env:
       UNIFIED_HOST_URL: http://127.0.0.1:8870
       UNIFIED_HOST_MANIFEST: F:\hermes-agent\unified_host_tools.json
-      # Bridge 运维面板地址，search_memes 等本地自有工具据此检索；改过 web.port 时必须同步
-      RUAJI_V2_WEB_BASE_URL: http://127.0.0.1:29998
     enabled: true
     timeout: 60
 ```
