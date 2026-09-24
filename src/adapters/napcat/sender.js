@@ -330,6 +330,9 @@ export class Sender {
             groupId,
             userId,
             messageType: task.target?.type ?? (isGroup ? 'group' : 'private'),
+            // 宿主 _dispatch_message_sent 用它判定会话类型；message.sent 的
+            // groupId/userId 在私聊下会让"群号 or QQ号"反推变得含糊。
+            isPrivate: !isGroup,
             status: result.status,
             replyId: result.replyId ?? null,
             error: result.error ?? null,

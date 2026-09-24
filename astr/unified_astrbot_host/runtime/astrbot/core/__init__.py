@@ -80,6 +80,27 @@ class SharedPreferences:
         with self._lock:
             return self._data.get(key, default)
 
+    async def get_async(
+        self,
+        key: str | None = None,
+        default: Any = None,
+        *,
+        scope: str | None = None,
+        scope_id: str | None = None,
+        **_: Any,
+    ) -> Any:
+        """真 AstrBot 的带作用域异步读取。
+
+        LivingMemory 的会话总开关 / 逐会话插件开关（passive_group_capture）
+        与人格优先级（core/utils.get_persona_id）都走这个入口。垫片是单进程
+        单机器人，没有按 scope_id 分命名空间的写入方，所以 scope/scope_id
+        在这里只是保持签名兼容，读取退化为全局键——但方法必须存在：
+        之前没有它，调用方只能靠吞 AttributeError 走默认分支。
+        """
+        if key is None:
+            return default
+        return self.get(key, default)
+
     def put(self, key: str, value: Any) -> None:
         with self._lock:
             self._data[key] = value

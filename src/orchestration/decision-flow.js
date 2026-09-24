@@ -154,6 +154,8 @@ export class DecisionFlow {
       content: inbound.content,
       rawMessage: inbound.rawMessage,
       messageType: inbound.messageType,
+      // 与 context.enrich 同理：宿主靠它判定会话类型（记忆/图谱的隔离身份）。
+      isPrivate: inbound.messageType === MESSAGE_TYPES.PRIVATE,
       wakeMode: this.config.wake.mode,
       atBot: inbound.flags.isAtBot,
       isAtBot: inbound.flags.isAtBot,

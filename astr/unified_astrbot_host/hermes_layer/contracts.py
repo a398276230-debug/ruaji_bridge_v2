@@ -10,6 +10,7 @@ Python 侧属性仍是 snake_case，转换在 `from_payload` / `to_payload` 里�
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -20,6 +21,26 @@ from typing import Any, Literal
 Verdict = Literal["direct", "auto", "ignore"]
 
 VERDICTS: tuple[str, ...] = ("direct", "auto", "ignore")
+
+
+#: 归一化后的私聊 messageType 取值。AstrBot 的 ``FriendMessage``、桥接的
+#: ``private``、以及历史写法 ``friend`` / ``private_message`` 都落进这个集合。
+_PRIVATE_MESSAGE_TYPE_TOKENS = frozenset(
+    {"private", "privatechat", "privatemessage", "friend", "friendmessage"}
+)
+
+
+def is_private_message_type(value: Any) -> bool:
+    """messageType 是否表示私聊。
+
+    只保留字母后小写再比对，于是 ``FriendMessage`` / ``friend_message`` /
+    ``private`` 都能命中；``GroupMessage`` / ``other`` 一律为 False。
+    宿主与桥接必须就"这条是不是私聊"给出一致答案——它决定 unified_msg_origin
+    里的 MessageType（记忆按会话隔离，判错就把私聊写进群会话），以及 LivingMemory
+    的主人私聊豁免。
+    """
+    token = re.sub(r"[^a-z]", "", str(value or "").casefold())
+    return token in _PRIVATE_MESSAGE_TYPE_TOKENS
 
 
 def _extract_at_targets(payload: dict[str, Any]) -> list[str]:
@@ -90,6 +111,11 @@ class InboundMessage:
     #: 原始 OneBot 事件，插件里少数分支会读它
     raw: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def message_type(self) -> str:
+        """归一化后的消息类型：``"private"`` / ``"group"``。"""
+        return "private" if self.is_private else "group"
+
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "InboundMessage":
         """从 HTTP body 构造。
@@ -122,6 +148,21 @@ class InboundMessage:
         # content 缺失（旧版桥接只发 text）时与 text 同值，保底不丢 @ 信息。
         content = str(payload.get("content") or text or "")
 
+        # 私聊判定：显式标志优先，缺失时从 messageType 推导。
+        # 桥接的 message.received / context.enrich 载荷一直只带 messageType
+        # （没有 isPrivate），推导缺失就会把主人私聊误判成群聊写进
+        # aiocqhttp:GroupMessage:<qq> 会话，LivingMemory 的主人私聊豁免也随之失效。
+        explicit_private = None
+        for key in ("isPrivate", "is_private", "private"):
+            value = payload.get(key)
+            if value is not None:
+                explicit_private = bool(value)
+                break
+        if explicit_private is None:
+            explicit_private = is_private_message_type(
+                payload.get("messageType") or payload.get("message_type")
+            )
+
         return cls(
             message_id=sid("messageId", "message_id"),
             group_id=sid("groupId", "group_id"),
@@ -137,7 +178,7 @@ class InboundMessage:
             text=str(text),
             content=content,
             self_id=sid("selfId", "self_id", "robotId", "robot_id"),
-            is_private=sbool("isPrivate", "is_private", "private"),
+            is_private=explicit_private,
             at_bot=sbool("isAtBot", "is_at_bot", "atBot", "at_bot"),
             reply_to=sid("replyTo", "reply_to"),
             role=str(payload.get("role") or "member"),
@@ -228,4 +269,5 @@ __all__ = [
     "InboundMessage",
     "Verdict",
     "estimate_tokens",
+    "is_private_message_type",
 ]

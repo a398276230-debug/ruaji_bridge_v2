@@ -138,6 +138,10 @@ export class ContextFlow {
       content: inbound.content,
       rawMessage: inbound.rawMessage,
       messageType: inbound.messageType,
+      // 私聊标志必须显式给宿主：context.enrich 的 body 没有 body 模板，
+      // 宿主只看到 messageType。缺它时宿主把私聊判成群聊，记忆会写进
+      // aiocqhttp:GroupMessage:<qq> 会话，LivingMemory 的主人私聊豁免也失效。
+      isPrivate: inbound.messageType === MESSAGE_TYPES.PRIVATE,
       atBot: inbound.flags.isAtBot,
       isAtBot: inbound.flags.isAtBot,
       isOwner: inbound.flags.isOwner,

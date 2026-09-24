@@ -12,6 +12,7 @@
  */
 
 import { CAPABILITIES } from '../contracts/capabilities.js';
+import { MESSAGE_TYPES } from '../contracts/messages.js';
 
 /**
  * @param {object} deps
@@ -57,6 +58,9 @@ export function createResultDecorateMiddleware(deps) {
                 groupId: context.inbound.groupId,
                 sessionId: context.inbound.sessionId,
                 messageType: context.inbound.messageType,
+                // 宿主 handle_decorate 只看嵌套 inbound；私聊标志显式给出，
+                // 不靠宿主从 messageType 反推（两边给出一致答案）。
+                isPrivate: context.inbound.messageType === MESSAGE_TYPES.PRIVATE,
                 text: context.inbound.text,
               }
             : null,

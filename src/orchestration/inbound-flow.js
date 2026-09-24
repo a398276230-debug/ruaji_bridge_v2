@@ -508,6 +508,9 @@ export class InboundFlow {
           userId: inbound.userId,
           groupId: inbound.groupId,
           messageType: inbound.messageType,
+          // 宿主 build_event 靠它决定 unified_msg_origin 的 MessageType
+          // （FriendMessage vs GroupMessage）。缺它就是私聊写进群会话。
+          isPrivate: inbound.messageType === MESSAGE_TYPES.PRIVATE,
           rawMessage: inbound.rawMessage,
           text: inbound.text,
           content: inbound.content,
