@@ -2,16 +2,22 @@
 
 import pytest
 
+from astrbot.api.platform import MessageType
+
 from astrbot_plugin_livingmemory.core.managers.conversation_manager import (
     ConversationManager,
 )
 from astrbot_plugin_livingmemory.core.memory_scope import (
+    DEFAULT_OWNER_ID,
     GLOBAL_MEMORY_SCOPE,
     is_event_memory_allowed,
+    is_owner_private_event,
+    is_owner_sender,
     parse_identity_aliases,
     parse_value_list,
     resolve_event_identity,
     resolve_memory_scope,
+    resolve_owner_ids,
     resolve_sender_alias,
 )
 from astrbot_plugin_livingmemory.storage.conversation_store import ConversationStore
@@ -26,6 +32,7 @@ class _Event:
         platform: str = "test",
         group_id: str = "",
         self_id: str = "bot-1",
+        message_type: MessageType = MessageType.FRIEND_MESSAGE,
     ) -> None:
         self.unified_msg_origin = session_id
         self.sender_id = sender_id
@@ -33,6 +40,10 @@ class _Event:
         self.platform = platform
         self.group_id = group_id
         self.self_id = self_id
+        self.message_type = message_type
+
+    def get_message_type(self):
+        return self.message_type
 
     def get_sender_id(self):
         return self.sender_id
@@ -77,6 +88,50 @@ def test_parse_lists_and_aliases():
         "test:user-1": "Alex",
         "original name": "Alice",
     }
+
+
+def test_resolve_owner_ids_prefers_config_then_env_then_default(monkeypatch):
+    monkeypatch.delenv("LIVINGMEMORY_OWNER_ID", raising=False)
+    monkeypatch.delenv("RUAJI_V2_OWNER_ID", raising=False)
+
+    configured = _config(access_control={"owner_ids": "111, 222;333"})
+    assert resolve_owner_ids(configured) == {"111", "222", "333"}
+
+    assert resolve_owner_ids(_config()) == {DEFAULT_OWNER_ID}
+
+    monkeypatch.setenv("LIVINGMEMORY_OWNER_ID", "444")
+    assert resolve_owner_ids(_config()) == {"444"}
+
+    # 配置非空时压过环境变量（面板可随时改）
+    assert resolve_owner_ids(configured) == {"111", "222", "333"}
+
+
+def test_is_owner_private_event_only_matches_owner_friend_messages(monkeypatch):
+    monkeypatch.setenv("LIVINGMEMORY_OWNER_ID", "3054039169")
+    config = _config()
+
+    owner_private = _Event(sender_id="3054039169")
+    friend_private = _Event(sender_id="2260757842")
+    owner_group = _Event(
+        sender_id="3054039169", message_type=MessageType.GROUP_MESSAGE
+    )
+
+    assert is_owner_private_event(config, owner_private) is True
+    assert is_owner_private_event(config, friend_private) is False
+    assert is_owner_private_event(config, owner_group) is False
+    assert is_owner_sender(config, owner_group) is True
+
+
+def test_is_owner_private_event_honors_identity_alias(monkeypatch):
+    monkeypatch.delenv("LIVINGMEMORY_OWNER_ID", raising=False)
+    monkeypatch.delenv("RUAJI_V2_OWNER_ID", raising=False)
+    config = _config(
+        access_control={
+            "owner_ids": "Ruaji",
+            "identity_aliases": "test:user-1=Ruaji",
+        }
+    )
+    assert is_owner_private_event(config, _Event(sender_id="user-1")) is True
 
 
 @pytest.mark.parametrize(

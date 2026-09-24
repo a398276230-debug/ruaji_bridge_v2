@@ -159,6 +159,50 @@ async def test_handle_memory_recall_stores_private_user_message(
 
 
 @pytest.mark.asyncio
+async def test_handle_memory_recall_skips_owner_private_message(
+    handler, conversation_manager, monkeypatch
+):
+    """主人私聊专属 Mem0，LivingMemory 召回路径不落库。"""
+    monkeypatch.setenv("LIVINGMEMORY_OWNER_ID", "owner-9")
+    event = _make_event(group=False)
+    event.get_sender_id = Mock(return_value="owner-9")
+    req = _make_req("owner input")
+
+    with patch(
+        "astrbot_plugin_livingmemory.core.event_handler_modules.memory_recall.get_persona_id",
+        new_callable=AsyncMock,
+    ) as get_persona:
+        get_persona.return_value = "persona_1"
+        await handler.handle_memory_recall(event, req)
+
+    conversation_manager.add_message_from_event.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_memory_recall_dedupes_private_message_with_passive_capture(
+    handler, conversation_manager, monkeypatch
+):
+    """同一条非主人私聊同时被被动捕获与召回看到时，只落库一次。"""
+    event = _make_event(group=False)
+    req = _make_req("user input")
+
+    with patch(
+        "astrbot_plugin_livingmemory.core.event_handler_modules.memory_recall.get_persona_id",
+        new_callable=AsyncMock,
+    ) as get_persona:
+        get_persona.return_value = "persona_1"
+        # 先模拟被动捕获已写入并标记去重
+        dedup_key = await handler._message_utils.build_dedup_key(
+            event, event.unified_msg_origin, "user input"
+        )
+        await handler._message_utils.mark_message_processed(dedup_key)
+        conversation_manager.add_message_from_event.reset_mock()
+        await handler.handle_memory_recall(event, req)
+
+    conversation_manager.add_message_from_event.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_handle_memory_reflection_triggers_storage_task(
     handler, conversation_manager, memory_engine
 ):
@@ -243,6 +287,60 @@ async def test_handle_all_group_messages_skips_bot_own_messages(
 
     # should NOT store bot's own message
     conversation_manager.add_message_from_event.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_memory_reflection_skips_owner_private(
+    handler, conversation_manager, memory_engine, monkeypatch
+):
+    monkeypatch.setenv("LIVINGMEMORY_OWNER_ID", "owner-9")
+    event = _make_event(group=False)
+    event.get_sender_id = Mock(return_value="owner-9")
+    resp = _make_resp("assistant answer")
+
+    await handler.handle_memory_reflection(event, resp)
+
+    conversation_manager.add_message_from_event.assert_not_awaited()
+    memory_engine.add_memory.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_all_group_messages_captures_non_owner_private(
+    handler, conversation_manager
+):
+    event = _make_event(group=False)
+    event.get_sender_id = Mock(return_value="2260757842")
+
+    await handler.handle_all_group_messages(event)
+
+    conversation_manager.add_message_from_event.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_all_group_messages_skips_owner_private(
+    handler, conversation_manager, monkeypatch
+):
+    monkeypatch.setenv("LIVINGMEMORY_OWNER_ID", "owner-9")
+    event = _make_event(group=False)
+    event.get_sender_id = Mock(return_value="owner-9")
+
+    await handler.handle_all_group_messages(event)
+
+    conversation_manager.add_message_from_event.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_handle_all_group_messages_dedupes_same_message(
+    handler, conversation_manager
+):
+    """同一条消息重复到达（被动捕获 + 召回路径）只落库一次。"""
+    event = _make_event(group=False)
+    event.get_sender_id = Mock(return_value="2260757842")
+
+    await handler.handle_all_group_messages(event)
+    await handler.handle_all_group_messages(event)
+
+    assert conversation_manager.add_message_from_event.await_count == 1
 
 
 @pytest.mark.asyncio

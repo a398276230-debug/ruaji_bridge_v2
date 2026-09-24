@@ -53,6 +53,11 @@ plugins:
         embedding_provider_id: ''
         llm_provider_id: ''
         rerank_provider_id: ''
+      access_control:
+        # 主人私聊专属桥接 Mem0（src/orchestration/mem0-ingestor.js），
+        # LivingMemory 不捕获/不总结/不入图谱。留空时宿主自动注入
+        # identity.owner_id；独立部署可写死或设 LIVINGMEMORY_OWNER_ID。
+        owner_ids: ''
       graph_memory:
         enabled: true
       filtering_settings:

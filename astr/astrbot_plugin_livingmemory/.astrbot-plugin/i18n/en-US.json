@@ -33,6 +33,10 @@
       "identity_aliases": {
         "description": "Identity Aliases",
         "hint": "Enter one source=canonical name mapping per line. The source may be platform:user ID, user ID, or current username, for example telegram:12345=Alex."
+      },
+      "owner_ids": {
+        "description": "Owner IDs (Private Chat Reserved for Mem0)",
+        "hint": "The owner's private chat is captured only by the Bridge's Mem0, so LivingMemory never captures, summarizes, or graphs it. Leave empty to fall back to the LIVINGMEMORY_OWNER_ID / RUAJI_V2_OWNER_ID environment variables and then to the default 3054039169. Commas, semicolons, or newlines separate multiple IDs."
       }
     },
     "provider_settings": {

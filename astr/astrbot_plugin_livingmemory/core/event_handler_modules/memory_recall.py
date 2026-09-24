@@ -14,7 +14,11 @@ from astrbot.api.platform import MessageType
 from astrbot.api.provider import ProviderRequest
 from astrbot.core.agent.message import TextPart
 
-from ..memory_scope import is_event_memory_allowed, resolve_memory_scope
+from ..memory_scope import (
+    is_event_memory_allowed,
+    is_owner_private_event,
+    resolve_memory_scope,
+)
 from ..utils import (
     OperationContext,
     format_memories_for_fake_tool_call,
@@ -137,9 +141,14 @@ class MemoryRecall:
                     prompt_text.strip() if isinstance(prompt_text, str) else ""
                 )
 
-                # 存储用户消息（仅私聊），无论是否启用召回都需要
+                # 存储用户消息（仅非主人私聊），无论是否启用召回都需要。
+                # 主人私聊专属 Mem0（桥接 mem0-ingestor），LivingMemory 不落库。
                 is_group = event.get_message_type() == MessageType.GROUP_MESSAGE
-                if not is_group and actual_query:
+                if (
+                    not is_group
+                    and actual_query
+                    and not is_owner_private_event(self.config_manager, event)
+                ):
                     message_to_store = request_query
                     if not message_to_store:
                         message_to_store = (
@@ -147,12 +156,28 @@ class MemoryRecall:
                         )
                     if not message_to_store:
                         message_to_store = actual_query.strip()
-                    await self.conversation_manager.add_message_from_event(
-                        event=event,
-                        role="user",
-                        content=message_to_store,
+                    # 与被动捕获路径（group_capture）共用去重缓存：同一条私聊消息
+                    # 可能同时被两条路径看到。先占位再落库，避免并发双双写入。
+                    dedup_key = await self.message_utils.build_dedup_key(
+                        event, session_id, message_to_store
                     )
-                    await self.message_utils.enforce_message_limit(session_id)
+                    already_captured = bool(
+                        dedup_key
+                        and await self.message_utils.is_duplicate_message(dedup_key)
+                    )
+                    if already_captured:
+                        logger.debug(
+                            f"[{session_id}] 私聊消息已由被动捕获写入，跳过重复落库"
+                        )
+                    else:
+                        if dedup_key:
+                            await self.message_utils.mark_message_processed(dedup_key)
+                        await self.conversation_manager.add_message_from_event(
+                            event=event,
+                            role="user",
+                            content=message_to_store,
+                        )
+                        await self.message_utils.enforce_message_limit(session_id)
 
                 # 若 top_k <= 0，跳过记忆检索和注入，但上述清理和消息存储已执行
                 top_k = self.config_manager.get("recall_engine.top_k", 3)

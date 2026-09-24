@@ -32,6 +32,12 @@
                 "hint": "每行填写 source=统一名称。source 可使用平台:用户 ID、用户 ID 或当前用户名，例如 telegram:12345=小明。",
                 "type": "text",
                 "default": ""
+            },
+            "owner_ids": {
+                "description": "主人 QQ 号（私聊专属 Mem0）",
+                "hint": "主人私聊由桥接 Mem0 专属沉淀，LivingMemory 不捕获、不总结、不入图谱，保证两套记忆 0 重叠。留空则依次读环境变量 LIVINGMEMORY_OWNER_ID / RUAJI_V2_OWNER_ID，再退回默认值 3054039169。支持逗号、分号或换行分隔多个 ID。",
+                "type": "text",
+                "default": ""
             }
         }
     },

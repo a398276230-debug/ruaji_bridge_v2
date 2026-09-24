@@ -8,7 +8,7 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.api.event.filter import CustomFilter
 from astrbot.api.platform import MessageType
 
-from .memory_scope import is_event_memory_allowed
+from .memory_scope import is_event_memory_allowed, is_owner_private_event
 
 SESSION_PLUGIN_NAMES = ("LivingMemory", "astrbot_plugin_livingmemory")
 _ACTIVE_PLUGIN_REF: weakref.ReferenceType | None = None
@@ -70,7 +70,11 @@ async def is_plugin_enabled_for_session(session_id: str) -> bool:
 
 
 class PassiveGroupCaptureFilter(CustomFilter):
-    """Schedule group-message capture without waking AstrBot's message pipeline."""
+    """Schedule passive capture without waking AstrBot's message pipeline.
+
+    群聊全量捕获，加上非主人好友的私聊。主人私聊刻意不放行：它由桥接的 Mem0
+    专属沉淀（src/orchestration/mem0-ingestor.js），LivingMemory 不得重复捕获。
+    """
 
     def __init__(self, raise_error: bool = True, plugin=None, **kwargs) -> None:
         if not isinstance(raise_error, bool) and plugin is None:
@@ -128,10 +132,16 @@ class PassiveGroupCaptureFilter(CustomFilter):
         ):
             return False
         try:
-            if event.get_message_type() != MessageType.GROUP_MESSAGE:
-                return False
+            message_type = event.get_message_type()
         except Exception as exc:
-            logger.debug(f"LivingMemory 被动群消息捕获类型检查失败: {exc}")
+            logger.debug(f"LivingMemory 被动消息捕获类型检查失败: {exc}")
+            return False
+        if message_type not in (MessageType.GROUP_MESSAGE, MessageType.FRIEND_MESSAGE):
+            return False
+
+        # 主人私聊专属 Mem0（桥接 mem0-ingestor），LivingMemory 一律不捕获。
+        # 判定每次现读配置，面板改动即时生效（见 memory_scope.resolve_owner_ids）。
+        if is_owner_private_event(plugin.config_manager, event):
             return False
 
         if not self._passes_global_whitelist(event, cfg):

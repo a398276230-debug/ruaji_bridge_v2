@@ -11,7 +11,11 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.api.platform import MessageType
 from astrbot.api.provider import LLMResponse
 
-from ..memory_scope import is_event_memory_allowed, resolve_memory_scope
+from ..memory_scope import (
+    is_event_memory_allowed,
+    is_owner_private_event,
+    resolve_memory_scope,
+)
 from ..memory_source import serialize_source_messages
 from ..utils import get_persona_id
 
@@ -86,6 +90,12 @@ class MemoryReflection:
 
         if not is_event_memory_allowed(self.config_manager, event):
             logger.debug("当前事件不在记忆白名单中，跳过记忆反思")
+            return
+
+        # 主人私聊专属 Mem0（桥接 mem0-ingestor），LivingMemory 不落库、
+        # 不总结、不入图谱，保证两套记忆 0 重叠。
+        if is_owner_private_event(self.config_manager, event):
+            logger.debug("主人私聊专属 Mem0，跳过 LivingMemory 记忆反思")
             return
 
         if resp.role != "assistant":

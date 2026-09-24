@@ -2,10 +2,19 @@
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
 GLOBAL_MEMORY_SCOPE = "livingmemory:global"
+
+#: 主人 QQ 号。主人私聊由桥接的 Mem0 专属沉淀（src/orchestration/mem0-ingestor.js），
+#: LivingMemory 一律不捕获、不反思、不入图谱，保证两套记忆 0 重叠。
+#: 解析优先级：插件配置 access_control.owner_ids > 环境变量 > 这里。
+DEFAULT_OWNER_ID = "3054039169"
+
+#: 环境变量兜底名。宿主会把 identity.owner_id 注入插件配置，独立部署时可用这里。
+OWNER_ID_ENV_VARS = ("LIVINGMEMORY_OWNER_ID", "RUAJI_V2_OWNER_ID")
 
 
 def _config_get(config: Any, key: str, default: Any = None) -> Any:
@@ -95,6 +104,51 @@ def resolve_sender_alias(
     return sender_name
 
 
+def resolve_owner_ids(config: Any) -> set[str]:
+    """主人标识集合。配置 > 环境变量 > 默认值。
+
+    每次调用现读配置/环境变量，不做构造期快照 —— 面板改了
+    ``access_control.owner_ids`` 必须立刻生效。
+    """
+    configured = parse_value_list(
+        _config_get(config, "access_control.owner_ids", "")
+    )
+    values = configured
+    if not values:
+        for name in OWNER_ID_ENV_VARS:
+            raw = os.environ.get(name, "")
+            values = parse_value_list(raw)
+            if values:
+                break
+    if not values:
+        values = [DEFAULT_OWNER_ID]
+    return {value.casefold() for value in values}
+
+
+def is_owner_sender(config: Any, event: Any) -> bool:
+    """事件发送者是否为主人（按 identity_aliases 归一化后的标识匹配）。"""
+    sender_id = _event_value(event, "get_sender_id", "sender_id")
+    if not sender_id:
+        return False
+    identity = resolve_event_identity(config, event)
+    owners = resolve_owner_ids(config)
+    return sender_id.casefold() in owners or (
+        bool(identity) and identity.casefold() in owners
+    )
+
+
+def is_owner_private_event(config: Any, event: Any) -> bool:
+    """主人私聊事件：由桥接 Mem0 负责，LivingMemory 的所有捕获入口都应跳过。"""
+    try:
+        from astrbot.api.platform import MessageType
+
+        if event.get_message_type() != MessageType.FRIEND_MESSAGE:
+            return False
+    except Exception:
+        return False
+    return is_owner_sender(config, event)
+
+
 def is_event_memory_allowed(config: Any, event: Any) -> bool:
     """Apply the plugin-level allowlist consistently to every entry point."""
     if not _config_get(config, "access_control.whitelist_enabled", False):
@@ -157,11 +211,16 @@ def resolve_memory_scope(config: Any, event: Any) -> str | None:
 
 
 __all__ = [
+    "DEFAULT_OWNER_ID",
     "GLOBAL_MEMORY_SCOPE",
+    "OWNER_ID_ENV_VARS",
     "is_event_memory_allowed",
+    "is_owner_private_event",
+    "is_owner_sender",
     "parse_identity_aliases",
     "parse_value_list",
     "resolve_event_identity",
     "resolve_memory_scope",
+    "resolve_owner_ids",
     "resolve_sender_alias",
 ]

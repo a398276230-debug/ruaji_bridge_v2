@@ -85,9 +85,39 @@ def test_passive_group_capture_filter_schedules_capture_without_waking():
     plugin._schedule_passive_group_capture.assert_called_once_with(event)
 
 
-def test_passive_group_capture_filter_ignores_private_messages():
+def test_passive_group_capture_filter_captures_non_owner_private_messages():
     plugin = _make_plugin()
     event = _make_event(MessageType.FRIEND_MESSAGE)
+    event.get_sender_id.return_value = "2260757842"
+    filter_ = PassiveGroupCaptureFilter(plugin)
+
+    assert _simulate_waking_check([filter_], event) is False
+    plugin._schedule_passive_group_capture.assert_called_once_with(event)
+
+
+def test_passive_group_capture_filter_skips_owner_private_messages():
+    """主人私聊专属桥接 Mem0，LivingMemory 不得重复捕获。"""
+    plugin = _make_plugin()
+    event = _make_event(MessageType.FRIEND_MESSAGE)
+    event.get_sender_id.return_value = "3054039169"
+    filter_ = PassiveGroupCaptureFilter(plugin)
+
+    assert _simulate_waking_check([filter_], event) is False
+    plugin._schedule_passive_group_capture.assert_not_called()
+
+
+def test_passive_group_capture_filter_owner_ids_config_wins_over_default():
+    """面板把 owner_ids 改掉后，新主人私聊立刻被跳过（不构造期快照）。"""
+    plugin = _make_plugin()
+    values = {
+        "session_manager.enable_full_group_capture": True,
+        "access_control.owner_ids": "99999999",
+    }
+    plugin.config_manager.get.side_effect = lambda key, default=None: values.get(
+        key, default
+    )
+    event = _make_event(MessageType.FRIEND_MESSAGE)
+    event.get_sender_id.return_value = "99999999"
     filter_ = PassiveGroupCaptureFilter(plugin)
 
     assert _simulate_waking_check([filter_], event) is False

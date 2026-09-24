@@ -190,6 +190,13 @@ class AccessControlConfig(BaseModel):
     whitelist_enabled: bool = Field(default=False, description="是否启用记忆白名单")
     allowed_ids: str = Field(default="", description="允许使用长期记忆的标识列表")
     identity_aliases: str = Field(default="", description="跨平台用户身份别名")
+    owner_ids: str = Field(
+        default="",
+        description=(
+            "主人标识列表（私聊专属 Mem0，LivingMemory 跳过）。"
+            "留空则读环境变量，再退回默认值。"
+        ),
+    )
 
 
 class ProviderConfig(BaseModel):

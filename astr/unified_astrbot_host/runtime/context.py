@@ -282,6 +282,7 @@ class UnifiedContext:
 
     def _build_specs(self) -> dict[str, MountSpec]:
         out: dict[str, MountSpec] = {}
+        identity = self.config.get("identity") or {}
         for key, raw in (self.config.get("plugins") or {}).items():
             raw = raw or {}
             out[key] = MountSpec(
@@ -290,9 +291,26 @@ class UnifiedContext:
                 path=os.path.abspath(str(raw.get("path") or "")),
                 entry=str(raw.get("entry") or "main"),
                 config_overrides=dict(raw.get("config") or {}),
+                identity_overrides=self._identity_overrides(key, identity),
                 enabled=raw.get("enabled", True) is not False,
             )
         return out
+
+    @staticmethod
+    def _identity_overrides(key: str, identity: dict[str, Any]) -> dict[str, Any]:
+        """宿主身份 → 插件配置的权威注入。
+
+        LivingMemory 需要知道主人 QQ 号，才能在被动捕获 / 私聊存储 / 记忆反思
+        三条入口上跳过主人私聊（那部分由桥接 Mem0 专属沉淀）。宿主
+        config.yaml 的 identity.owner_id 是唯一事实源，注入由 loader 最后
+        合并，插件面板保存配置也不会让它漂移。
+        """
+        if key != "living_memory":
+            return {}
+        owner_id = str(identity.get("owner_id") or "").strip()
+        if not owner_id:
+            return {}
+        return {"access_control": {"owner_ids": owner_id}}
 
     async def _initialize_plugins(self) -> None:
         """按挂载顺序调 initialize()，并等 LivingMemory 真正就绪。"""

@@ -56,6 +56,9 @@ class MountSpec:
     只导入包名的话拿到的是个空模块，`_find_star_class` 自然什么也找不到。
     """
     config_overrides: dict[str, Any] = field(default_factory=dict)
+    """来自宿主 config.yaml ``plugins.<key>.config``，会被插件持久化配置覆盖。"""
+    identity_overrides: dict[str, Any] = field(default_factory=dict)
+    """宿主身份（如 identity.owner_id）派生的插件配置，**最后**合并、不可被覆盖。"""
     enabled: bool = True
 
     @property
@@ -249,6 +252,12 @@ def mount_one(context: Any, spec: MountSpec) -> PluginMount:
                 logger.debug("已合并持久化配置: %s", candidate_cfg)
         except Exception as exc:
             logger.warning("读取已持久化配置 %s 失败: %s", candidate_cfg, exc)
+
+    # 宿主身份派生的配置最后合并：identity.owner_id 是单一事实源，必须压过
+    # 插件自己持久化的 config.json，否则插件面板一保存就会把身份写死。
+    if spec.identity_overrides:
+        merged = _deep_merge(merged, spec.identity_overrides)
+        logger.debug("已注入宿主身份配置: %s", sorted(spec.identity_overrides))
     config = AstrBotConfig(
         merged,
         config_path=os.path.join(data_dir, "config.json"),
