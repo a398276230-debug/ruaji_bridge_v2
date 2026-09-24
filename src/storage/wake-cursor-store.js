@@ -217,6 +217,48 @@ export class WakeCursorStore {
     this.save();
   }
 
+  /**
+   * 冷启动基线（缺陷二）：给一个"没有游标记录"的会话建立起点。
+   *
+   * 语义与 setCursor 不同：这是**初始化**而不是推进——把游标直接放到当前最新
+   * 行号，并把历史块的稳定去重键（stableKey / dedupKey / anchorKey）一次性回填
+   * 进 handled。于是重启后既不会把历史转述喷发出去，将来 transcript 改写重分号
+   * 也拦得住（靠稳定键）。
+   *
+   * 整体只落盘一次（不是逐条 markHandled 各写一次文件），后一次 prune 顺带裁。
+   *
+   * @param {string} sessionId
+   * @param {{lastRowId: number, messageCount?: number, handledKeys?: string[]}} opts
+   * @returns {{marked: number, lastRowId: number}}
+   */
+  snapshotSession(sessionId, { lastRowId, messageCount, handledKeys = [] } = {}) {
+    const key = String(sessionId);
+    if (!key) return { marked: 0, lastRowId: 0 };
+    const now = this.now();
+    let marked = 0;
+    for (const raw of handledKeys) {
+      const k = raw == null ? '' : String(raw);
+      if (!k) continue;
+      // 重新 set 让它在 Map 尾部（保持"插入顺序 ≈ 淘汰顺序"）
+      this.handled.delete(k);
+      this.handled.set(k, now);
+      marked += 1;
+    }
+    const next = Number(lastRowId);
+    const current = this.cursors.get(key);
+    const count = Number(messageCount);
+    if (Number.isFinite(next)) {
+      this.cursors.set(key, {
+        lastRowId: Math.max(next, current?.lastRowId ?? 0),
+        messageCount: Number.isFinite(count) ? count : current?.messageCount ?? 0,
+        updatedAt: now,
+      });
+    }
+    this.prune();
+    this.save();
+    return { marked, lastRowId: this.cursors.get(key)?.lastRowId ?? 0 };
+  }
+
   isHandled(anchorKey) {
     return this.handled.has(String(anchorKey));
   }

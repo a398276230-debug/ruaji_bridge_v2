@@ -49,6 +49,7 @@ import { CommandFlow } from '../orchestration/command-flow.js';
 import { InboundFlow } from '../orchestration/inbound-flow.js';
 import { FastAckDispatcher } from '../orchestration/fast-ack.js';
 import { WakeFlow } from '../orchestration/wake-flow.js';
+import { SessionSendQueue } from '../orchestration/session-send-queue.js';
 import { ReplyAnchorTracker } from '../orchestration/reply-anchor-tracker.js';
 import { Mem0Ingestor } from '../orchestration/mem0-ingestor.js';
 import { ShadowRecorder } from '../shadow/comparator.js';
@@ -177,6 +178,18 @@ export function createContainer(config, overrides = {}) {
     logger,
   });
 
+  // 会话级输出互斥（缺陷一）：主回复流与异步唤醒流争同一个 QQ 目标时严格串行，
+  // 后到的等前一轮完全发完再开始，绝不把两套切句分段交错投递。
+  const outputMutexConfig = config.reply?.outputMutex ?? {};
+  const sessionSendQueue = outputMutexConfig.enabled === false
+    ? null
+    : new SessionSendQueue({
+        sender,
+        eventBus,
+        logger,
+        timeoutMs: outputMutexConfig.timeoutMs,
+      });
+
   // ===== 模型 =====
   // 会话映射存储全进程唯一：主对话与画像 adapter 必须共用同一个实例。
   // 各建各的会导致两份内存快照整文件互相覆盖，重启后 /new 分支丢失。
@@ -298,6 +311,7 @@ export function createContainer(config, overrides = {}) {
     fastAck,
     memeMatcher,
     traceCollector,
+    sessionSendQueue,
   });
   const decisionFlow = new DecisionFlow({
     fetchImpl,
@@ -317,6 +331,7 @@ export function createContainer(config, overrides = {}) {
     sessionStore,
     memeStore,
     sender,
+    sessionSendQueue,
     config,
     logger,
   });
@@ -381,6 +396,7 @@ export function createContainer(config, overrides = {}) {
     anchorTracker: replyAnchorTracker,
     health,
     modelRouter,
+    sessionSendQueue,
   });
 
   const container = {
@@ -413,6 +429,7 @@ export function createContainer(config, overrides = {}) {
     normalizer,
     websocket,
     sender,
+    sessionSendQueue,
     modelAdapter,
     modelRouter,
     hermesApi,

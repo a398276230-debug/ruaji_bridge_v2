@@ -39,6 +39,7 @@ import { createModelRequest, createOutboundMessage } from '../contracts/messages
 import { TRIGGER_TYPES } from '../contracts/capabilities.js';
 import { createTransformContext, RESPONSE_NOTICE } from '../middleware/index.js';
 import { splitIntoSegments } from './sentence-splitter.js';
+import { sendLaneKey } from './session-send-queue.js';
 import { extractDetachedDeliveries, resolveSessionTarget, delegationRefOf } from '../adapters/hermes/wake-extractor.js';
 
 /** 连续两跳内容不变就认为"块已稳定"，可以投递未闭合的唤醒块 */
@@ -109,6 +110,8 @@ export class WakeFlow {
     this.anchors = opts.anchorTracker ?? null;
     this.health = opts.health ?? null;
     this.model = opts.modelRouter ?? null;
+    /** 会话级输出互斥（可选注入）：与 ReplyFlow 争同一个 QQ 目标时严格让位 */
+    this.outputQueue = opts.sessionSendQueue ?? null;
     /** anchorKey -> { attempts, lastAt, inFlight }：委派转述唤醒的进程内去重/重试状态 */
     this.relayState = new Map();
 
@@ -118,12 +121,19 @@ export class WakeFlow {
     this.sessionState = new Map();
     /** sessionId -> { anchorRowId, partCount, hits } 未闭合唤醒块的稳定性计数 */
     this.pendingBlocks = new Map();
+    /** sessionId 集合：这一跳因目标被别的 flow 独占而未投递，需要下一跳重试 */
+    this.deferred = new Set();
     this.lastErrorLoggedAt = 0;
     this.polling = false;
   }
 
   get enabled() {
     return this.config.wakeDelivery?.enabled === true;
+  }
+
+  /** 冷启动 Snapshot 开关（默认开；显式 false 才退回旧的"从 0 行开扫"行为） */
+  get _coldStartSnapshotEnabled() {
+    return this.config.wakeDelivery?.coldStartSnapshot !== false;
   }
 
   start() {
@@ -194,9 +204,19 @@ export class WakeFlow {
         const state = this.sessionState.get(sessionId);
         const cursor = this.cursors.getCursor(sessionId);
         const count = Number(row?.message_count) || 0;
+        // 冷启动保护（缺陷二）：没有游标的会话 = 桥接从没消费过这个目标的
+        // transcript（全新部署 / 游标被裁掉 / 文件丢失）。此时绝不能从 0 行开扫，
+        // 否则重启前积累的历史转述会被当成新通知整段喷发。以当前最新行号为基线，
+        // 并把历史块的稳定去重键一并回填（见 _snapshotSession）。
+        if (!cursor && this._coldStartSnapshotEnabled) {
+          await this._snapshotSession({ sessionId, target, count, now });
+          this.sessionState.set(sessionId, { lastPollAt: now, count });
+          polled += 1;
+          continue;
+        }
         // 还有未结算的唤醒块时必须每跳都读：message_count 没变不代表模型回复
         // 还没写进来（自投递唤醒轮的 user 行先落、assistant 行后落）。
-        const pending = this.pendingBlocks.has(sessionId);
+        const pending = this.pendingBlocks.has(sessionId) || this.deferred.has(sessionId);
         const changed = !cursor || cursor.messageCount !== count;
         const stale = !state || now - state.lastPollAt >= VERIFY_INTERVAL_MS;
         if (!force && !pending && !changed && !stale) continue;
@@ -216,10 +236,80 @@ export class WakeFlow {
     }
   }
 
+  /**
+   * 冷启动基线（缺陷二）。
+   *
+   * 触发条件：会话存在、但 WakeCursorStore 里没有它的游标记录。可能原因：
+   *   - 全新部署（wakeDelivery 刚开）；
+   *   - 游标被 retainDays 裁掉 / wake_cursors.json 丢失或损坏被隔离；
+   *   - 新旧代码升级之间游标没来得及写。
+   *
+   * 这时若仍从 0 行开扫，transcript 里重启前已完成的历史转述会被当成新通知
+   * 整段喷发到 QQ（用户反馈的"重启冷启动翻旧账重发"）。做法：
+   *   1. 读一次 transcript，用同一个 extractor 把**所有**历史块（含未闭合的）
+   *      解出来，把它们与行号无关的稳定键（stableKey / dedupKey）与 anchorKey
+   *      全部回填进 handled；
+   *   2. 游标一次性推到当前最新行号。
+   * 于是：本跳不投递任何东西；将来 Hermes 压缩/改写重新分配行号，历史块也会被
+   * 稳定键拦住，不会复活。启动后新落地的通知行号 > 基线，照常投递。
+   *
+   * @returns {Promise<boolean>} 是否成功建立基线
+   */
+  async _snapshotSession({ sessionId, target, count, now }) {
+    // 取**最新**一页：基线必须是真正的末行。若用 order=oldest + limit，长 transcript 会
+    // 只返回最早的一页，基线偏低，最新一页里的历史块既没被登记、游标又停在前面，
+    // 下一跳仍可能把它们当新通知。extractor 内部会按 id 升序处理，与返回顺序无关。
+    const page = await this.api.fetchMessages(sessionId, {
+      order: 'latest',
+      limit: this.config.wakeDelivery?.messagePageLimit ?? 500,
+    });
+    if (!page.ok) {
+      this._noteError(`冷启动基线读取失败 ${sessionId}: ${page.error}`, now);
+      return false;
+    }
+    const messages = Array.isArray(page.data?.data) ? page.data.data : [];
+    // maxAgeMs=0：历史块一律视为"已处理"，不按年龄筛。
+    // emitOpenBlocks=true：未闭合的块（还没等到模型回复）也要登记稳定键，
+    // 否则它的 stableKey 会漏掉，改写重分号后仍可能被当新块重推。
+    // fallbackAfterMs=0：基线阶段不生成兑底提示。
+    const extracted = extractDetachedDeliveries(messages, {
+      sessionId,
+      lastRowId: 0,
+      now,
+      maxAgeMs: 0,
+      emitOpenBlocks: true,
+      fallbackAfterMs: 0,
+    });
+    const handledKeys = [];
+    for (const delivery of extracted.deliveries) {
+      handledKeys.push(delivery.anchorKey, delivery.stableKey, delivery.dedupKey);
+    }
+    for (const delegation of extracted.delegations) {
+      handledKeys.push(delegation.anchorKey, delegation.stableKey);
+    }
+    const baseline = messages.reduce((max, row) => Math.max(max, Number(row?.id) || 0), 0);
+    this.cursors.snapshotSession(sessionId, { lastRowId: baseline, messageCount: count, handledKeys });
+    this.health?.increment('wakeDelivery', 'coldStartSnapshot');
+    this.log.info('冷启动基线已建立：历史转述不再补发', {
+      sessionId,
+      target: `${target.messageType}:${target.id}`,
+      rows: messages.length,
+      baselineRowId: baseline,
+      blockedDeliveries: extracted.deliveries.length,
+      pendingDelegations: extracted.delegations.length,
+      handledKeys: handledKeys.filter(Boolean).length,
+    });
+    return true;
+  }
+
   /** 读一个会话的 transcript 并投递其中的分体通知 */
   async _pollSession({ sessionId, target, count, now }) {
+    // 取**最新**一页：游标只关心 id > lastRowId 的行，而通知总在 transcript 末尾。
+    // 用 order=oldest + limit 读长 transcript 时只会拿到最早的一页，末尾的新通知永远
+    // 看不见（会话轮换周期内超过 limit 行就漏推）。extractor 内部按 id 升序处理，
+    // 与返回顺序无关。
     const page = await this.api.fetchMessages(sessionId, {
-      order: 'oldest',
+      order: 'latest',
       limit: this.config.wakeDelivery?.messagePageLimit ?? 500,
     });
     if (!page.ok) {
@@ -265,20 +355,55 @@ export class WakeFlow {
     }
 
     let delivered = 0;
-    let failedAt = null;
+    /** 第一个没能投递的位置（失败或让位）：游标停在它之前，下一跳重试 */
+    let blocker = null;
+    let deferred = false;
     for (const delivery of deliveries) {
       if (this.cursors.isHandled(delivery.anchorKey)) continue;
+      // 跨 transcript 改写去重：Hermes 压缩会重新分配行号，anchorKey 会变，
+      // 但 stableKey（deleg_/proc_ id）与 dedupKey（stableKey + 正文哈希）不会。
+      // 注意只比 dedupKey，不比 stableKey：同一个 proc 的多次 watch_match 正文不同，
+      // 必须都推，拿 stableKey 一刀切会把它们误吞。
+      if (delivery.dedupKey && this.cursors.isHandled(delivery.dedupKey)) {
+        this.log.debug('唤醒通知已投递过（稳定键命中），跳过', {
+          sessionId,
+          rowId: delivery.rowId,
+          dedupKey: delivery.dedupKey,
+        });
+        continue;
+      }
       try {
-        const sent = await this._deliver(delivery, target, { sessionId });
-        if (sent > 0) delivered += 1;
+        const result = await this._deliver(delivery, target, { sessionId });
+        if (result.deferred) {
+          // 目标正被主回复流独占：不插队（缺陷一），游标停在这条之前，下一跳再试
+          deferred = true;
+          blocker = blocker == null ? delivery.rowId : Math.min(blocker, delivery.rowId);
+          break;
+        }
+        if (result.queued > 0) delivered += 1;
       } catch (err) {
         // 单个分体通知失败不拖垮整轮：游标停在它之前，下一跳重试（已投递的靠 anchorKey 去重）
-        failedAt = failedAt == null ? delivery.rowId : Math.min(failedAt, delivery.rowId);
+        blocker = blocker == null ? delivery.rowId : Math.min(blocker, delivery.rowId);
         this._noteError(`唤醒通知投递失败 ${sessionId}#${delivery.rowId}: ${err.message}`, now);
       }
     }
 
-    const cursorTarget = failedAt == null ? nextRowId : Math.min(nextRowId, failedAt - 1);
+    // 让位的会话必须下一跳继续重试（否则 message_count 不变就再也不读了）；
+    // 顺手把"已稳定"状态留住，下一跳直接重新结算，不必再等两跳稳定性。
+    if (deferred) {
+      this.deferred.add(sessionId);
+      if (first.openBlock) {
+        this.pendingBlocks.set(sessionId, {
+          anchorRowId: first.openBlock.anchorRowId,
+          partCount: first.openBlock.partCount,
+          hits: STABILITY_TICKS,
+        });
+      }
+    } else {
+      this.deferred.delete(sessionId);
+    }
+
+    const cursorTarget = blocker == null ? nextRowId : Math.min(nextRowId, blocker - 1);
     this.cursors.setCursor(sessionId, cursorTarget, { messageCount: count });
     if (delivered > 0) {
       // delivered = 本轮结算的"分体通知块"数（一个块可能被切句器拆成多条 QQ 消息）
@@ -304,9 +429,15 @@ export class WakeFlow {
     for (const sessionId of this.pendingBlocks.keys()) {
       if (!byId.has(sessionId)) this.pendingBlocks.delete(sessionId);
     }
-    // 委派转述状态按 anchorKey 记，而不是会话：清掉已不在会话列表里的目标即可
-    for (const key of this.relayState.keys()) {
-      if (!byId.has(key.split('#')[0])) this.relayState.delete(key);
+    for (const sessionId of this.deferred) {
+      if (!byId.has(sessionId)) this.deferred.delete(sessionId);
+    }
+    // 委派转述状态按 anchorKey 记，而不是会话：清掉已不在会话列表里的目标即可。
+    // sessionId 直接存在状态里 —— 会话 id 本身可能含 '#'（/new 轮换形如 …_#02），
+    // 用 split('#')[0] 反推会把会话名截断，导致状态被每跳误删、反复叫醒模型。
+    for (const [key, state] of this.relayState) {
+      const sid = state?.sessionId ?? key.split('#')[0];
+      if (!byId.has(sid)) this.relayState.delete(key);
     }
   }
 
@@ -326,7 +457,7 @@ export class WakeFlow {
     const relay = this.config.wakeDelivery?.delegationRelay ?? {};
     if (relay.enabled === false || !this.model?.generate) return;
 
-    const key = delegation.anchorKey;
+    const key = delegation.stableKey ?? delegation.anchorKey;
     if (this.cursors?.isHandled?.(key)) return;
 
     const state = this.relayState.get(key);
@@ -341,7 +472,7 @@ export class WakeFlow {
     if (graceMs > 0 && delegation.at > 0 && now - delegation.at < graceMs) return;
 
     const attempts = (state?.attempts ?? 0) + 1;
-    this.relayState.set(key, { attempts, lastAt: now, inFlight: true });
+    this.relayState.set(key, { attempts, lastAt: now, inFlight: true, sessionId });
 
     const modelRequest = createModelRequest({
       correlationId: `wake-relay-${delegation.rowId}-${randomUUID().slice(0, 8)}`,
@@ -359,7 +490,7 @@ export class WakeFlow {
     this.model.generate(modelRequest).then(() => {
       // done：唤醒已成功，不再重复叫（提取器可能连续几跳都把同一个锚点报上来，
       // 例如两条委派完成行前后脚落地时前一条会被反复闭合）
-      this.relayState.set(key, { attempts, lastAt: Date.now(), inFlight: false, done: true });
+      this.relayState.set(key, { attempts, lastAt: Date.now(), inFlight: false, done: true, sessionId });
       this.health?.increment('wakeDelivery', 'delegationRelay');
       this.log.info('已为异步委派完成行叫醒模型转述', {
         sessionId,
@@ -368,7 +499,7 @@ export class WakeFlow {
         attempts,
       });
     }).catch((err) => {
-      this.relayState.set(key, { attempts, lastAt: Date.now(), inFlight: false });
+      this.relayState.set(key, { attempts, lastAt: Date.now(), inFlight: false, sessionId });
       this._noteError(`委派转述唤醒失败 ${sessionId}#${delegation.rowId}: ${err.message}`, now);
     });
   }
@@ -400,10 +531,38 @@ export class WakeFlow {
 
   /**
    * 一条分体通知 → QQ。
-   * @returns {Promise<number>} 实际入队的段数
+   *
+   * 会话级输出租约（缺陷一）：目标被 ReplyFlow 独占时直接返回 `{deferred:true}`
+   * 让位，不阻塞等待——阻塞会把整个轮询循环（其它会话）一起卡住。调用方据此把
+   * 游标停在这一条之前，并把会话标为需要下一跳重试。租约直到本轮分段全部投递
+   * 结算才释放。
+   *
+   * @returns {Promise<{queued: number, deferred: boolean}>}
    */
   async _deliver(delivery, target, { sessionId }) {
     const contractSessionId = `qq:${target.messageType}:${target.id}`;
+    const laneKey = sendLaneKey({ type: target.messageType, id: target.id });
+    const lease = this.outputQueue ? this.outputQueue.tryAcquire(laneKey, { owner: 'wake' }) : null;
+    if (this.outputQueue && !lease) return { queued: 0, deferred: true };
+    try {
+      return await this._deliverWithLease(delivery, target, { sessionId, contractSessionId, lease });
+    } finally {
+      if (lease) {
+        try {
+          await lease.release();
+        } catch (err) {
+          this.log.warn('唤醒通知输出租约释放异常（已忽略）', {
+            sessionId,
+            rowId: delivery.rowId,
+            error: err?.message ?? String(err),
+          });
+        }
+      }
+    }
+  }
+
+  /** @returns {Promise<{queued: number, deferred: boolean}>} */
+  async _deliverWithLease(delivery, target, { sessionId, contractSessionId, lease }) {
     const correlationId = `wake-${delivery.rowId}-${randomUUID().slice(0, 8)}`;
     const inbound = this._syntheticInbound({ target, delivery, contractSessionId });
     const correlation = { correlationId, sessionId: contractSessionId };
@@ -434,24 +593,25 @@ export class WakeFlow {
       // 的视觉锚，挂在后续分段上会变成一串重复引用。
       const replyToMessageId = queued === 0 && anchor ? anchor.messageId : null;
 
-      this.sender.enqueue(
-        createOutboundMessage({
-          ...correlation,
-          target: { type: target.messageType, id: target.id },
-          text: body,
-          metadata: {
-            isFirst: false,
-            disableAutoMention: true,
-            origin: 'hermes-wake',
-            noticeKind: delivery.kind,
-            noticeRowId: delivery.rowId,
-            noticeSessionId: sessionId,
-            ...(replyToMessageId
-              ? { replyToMessageId, anchorTurnId: anchor.turnId ?? null, anchorMatched: anchor.matched ?? null }
-              : {}),
-          },
-        }),
-      );
+      const outbound = createOutboundMessage({
+        ...correlation,
+        target: { type: target.messageType, id: target.id },
+        text: body,
+        metadata: {
+          isFirst: false,
+          disableAutoMention: true,
+          origin: 'hermes-wake',
+          noticeKind: delivery.kind,
+          noticeRowId: delivery.rowId,
+          noticeSessionId: sessionId,
+          ...(replyToMessageId
+            ? { replyToMessageId, anchorTurnId: anchor.turnId ?? null, anchorMatched: anchor.matched ?? null }
+            : {}),
+        },
+      });
+      // 输出租约存在时必须经租约入队（同目标串行）；未注入时退回直接 enqueue
+      if (lease?.held) lease.enqueue(outbound);
+      else this.sender.enqueue(outbound);
       queued += 1;
     }
 
@@ -468,6 +628,11 @@ export class WakeFlow {
     }
 
     this.cursors.markHandled(delivery.anchorKey);
+    // 稳定键一并记上：
+    //  - dedupKey 拦住改写后同正文的二次投递（本次事故的直接原因）
+    //  - stableKey 拦住改写后同一个委派锚点再次叫醒模型
+    if (delivery.dedupKey) this.cursors.markHandled(delivery.dedupKey);
+    if (delivery.stableKey) this.cursors.markHandled(delivery.stableKey);
     if (queued === 0) {
       this.log.debug('唤醒通知处理后无可见文本，跳过投递', {
         sessionId,
@@ -475,7 +640,7 @@ export class WakeFlow {
         kind: delivery.kind,
       });
     }
-    return queued;
+    return { queued, deferred: false };
   }
 
   /**

@@ -79,6 +79,9 @@ function buildRealSend({ wakeDelivery = { enabled: true }, storage } = {}) {
     },
     routes,
   });
+  // 模拟"桥接已经在跑"：冷启动保护不会给无游标会话投递历史块，
+  // 这里把游标放到唤醒块之前（行 1-2 已消费）
+  container.wakeCursorStore.setCursor(GROUP_SESSION, 2, { messageCount: 2 });
   return { container, sent };
 }
 

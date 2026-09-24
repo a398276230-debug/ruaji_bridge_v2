@@ -69,6 +69,13 @@ const DEFAULTS = {
     fallbackNotice: '⚠️ 后台任务已结束，但瑞姬没能生成回复内容\n{notice}',
     /** 游标与已投递记录保留天数 */
     retainDays: 7,
+    /**
+     * 冷启动保护（缺陷二）：会话存在但**没有游标记录**时（全新部署 /
+     * 游标被裁掉 / wake_cursors.json 丢失或损坏），以当前 transcript 的最新行号
+     * 为起点基线，并把历史块的稳定去重键回填进 handled，只监听启动后落地的
+     * 新完成通知。显式 false 才退回旧的"从 0 行开扫"行为。
+     */
+    coldStartSnapshot: true,
     /** 只处理 Hermes 会话表里 source 为该值的会话 */
     source: 'api_server',
     /**
@@ -179,6 +186,13 @@ const DEFAULTS = {
     maxSendRetries: 10,
     /** 模型完成事件的同步结算上限；超时只跳过本轮评分，不影响发送 */
     settlementTimeoutMs: 8000,
+    /**
+     * 会话级输出互斥（缺陷一）：同一个 QQ 目标上，主回复流的分段与异步唤醒
+     * 通知、命令回执严格串行，后到的等前一轮完全发完再开始（不再交错投递）。
+     *   timeoutMs: 等一轮投递完成的硬上限，到点强制放行（只保证不死锁）。
+     *   enabled:   显式 false 退回旧行为（不排队、任其交错）。
+     */
+    outputMutex: { enabled: true, timeoutMs: 90000 },
   },
   favourUltraEnabled: false,
   legacyAffectionEnabled: true,

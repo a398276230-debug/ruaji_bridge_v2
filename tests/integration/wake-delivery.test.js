@@ -68,6 +68,15 @@ async function pollTwice(container) {
   await flush();
 }
 
+/**
+ * 模拟"桥接已经在跑"。冷启动保护（缺陷二）会给没有游标记录的会话建立基线、
+ * 不投递任何历史块；所以这些测投递行为的用例要先把游标放到唤醒块出现之前，
+ * 就像上一跳刚读完前几行一样。
+ */
+function seedRunningCursor(container, sessionId, lastRowId, messageCount) {
+  container.wakeCursorStore.setCursor(sessionId, lastRowId, { messageCount });
+}
+
 test('后台任务完成 → 桥接取回唤醒回复并推给群聊（只推一次）', async () => {
   const container = buildTestContainer({
     configOverrides: { wakeDelivery: { enabled: true, maxAgeMs: 1800000 } },
@@ -76,6 +85,7 @@ test('后台任务完成 → 桥接取回唤醒回复并推给群聊（只推一
       byId: { [GROUP_SESSION]: messages({ sessionId: GROUP_SESSION }) },
     }),
   });
+  seedRunningCursor(container, GROUP_SESSION, 2, 2);
 
   try {
     assert.equal(container.wakeFlow.enabled, true);
@@ -119,6 +129,7 @@ test('桥接重启（进程内重建游标存储）后不重复推送', async ()
     configOverrides: { wakeDelivery: { enabled: true }, storage: { cacheDir } },
     routes,
   });
+  seedRunningCursor(first, GROUP_SESSION, 2, 2);
   try {
     await pollTwice(first);
     assert.equal(first.sender.dryRunLog.length, 1);
@@ -198,6 +209,7 @@ test('压缩/轮换后的子会话靠 parent_session_id 仍能投递到原目标
       },
     }),
   });
+  seedRunningCursor(container, childId, 2, 2);
   try {
     await pollTwice(container);
     assert.equal(container.sender.dryRunLog.length, 1);
@@ -215,6 +227,7 @@ test('过期通知只推进游标、不推送（防止重启后补发几小时�
       byId: { [GROUP_SESSION]: messages({ sessionId: GROUP_SESSION }) },
     }),
   });
+  seedRunningCursor(container, GROUP_SESSION, 0, 0);
   try {
     // 把"当前时间"推到 1 小时之后：块早于 maxAgeMs，属于过期
     await container.wakeFlow.pollOnce({ now: NOW_MS + 3600_000 });
@@ -240,6 +253,7 @@ test('唤醒轮没有产出回复 → 到点后推兜底提示', async () => {
       byId: { [GROUP_SESSION]: messages({ sessionId: GROUP_SESSION, withReply: false }) },
     }),
   });
+  seedRunningCursor(container, GROUP_SESSION, 2, 2);
   try {
     const later = NOW_MS + 120000;
     await container.wakeFlow.pollOnce({ now: later });
@@ -296,6 +310,7 @@ test('异步委派完成行不直推：桥接自投递唤醒轮，只推模型�
       }),
     },
   });
+  seedRunningCursor(container, PRIVATE_SESSION, 2, 2);
 
   try {
     await container.wakeFlow.pollOnce(); // 第一跳：识别委派锚点 → 自投递唤醒轮
@@ -345,6 +360,7 @@ test('两条委派完成行各只叫醒一次（不因反复闭合而重复唤�
       byId: { [PRIVATE_SESSION]: rows },
     }),
   });
+  seedRunningCursor(container, PRIVATE_SESSION, 2, 2);
   try {
     await container.wakeFlow.pollOnce();
     await flush();
@@ -390,6 +406,7 @@ test('关掉 delegationRelay 时不叫醒模型，只推系统级兜底提示', 
       byId: { [PRIVATE_SESSION]: rows },
     }),
   });
+  seedRunningCursor(container, PRIVATE_SESSION, 1, 1);
   try {
     await pollTwice(container);
     assert.equal(model.calls.length, 0, '关掉转述桥就不该叫醒模型');
@@ -411,6 +428,59 @@ test('Hermes 管理 API 不可达时不抛异常，只记错误', async () => {
     assert.deepEqual(out, { sessions: 0, polled: 0, delivered: 0 });
     assert.ok(container.health.state.wakeDelivery.lastError);
     assert.equal(container.sender.dryRunLog.length, 0);
+  } finally {
+    container.cleanup();
+  }
+});
+
+test('Hermes 压缩重分配行号后，已投递的委派转述不会被二次投递（真实事故回归）', async () => {
+  const SID = 'qq_private_3054039169_20260924_2_#02';
+  const DELEG = '[ASYNC DELEGATION BATCH COMPLETE — deleg_34353c83]\n--- RESULT ---\n2000 字报告';
+  const RELAY = '（内部机制提示，不需要回应这句话本身）子任务（deleg_34353c83）跑完了，请自行阅读上文并简要转述。';
+  const REPLY = '搜图结论：没查到确凿出处。';
+  const withSession = (rows) => rows.map((r) => ({ ...r, session_id: SID }));
+
+  // 改写前：委派行 + 自投递唤醒提示词行 + 转述回复（投递锚点是提示词行 64892）
+  const before = withSession([
+    { id: 64891, role: 'user', content: DELEG, display_kind: 'async_delegation_complete', timestamp: sec(-40000) },
+    { id: 64892, role: 'user', content: RELAY, display_kind: 'internal_notification', timestamp: sec(-39000) },
+    { id: 64893, role: 'assistant', content: REPLY, timestamp: sec(-38000) },
+  ]);
+  // 改写后：整段行号 +69，提示词行被合并进委派行（锚点变成 64961）
+  const after = withSession([
+    { id: 64961, role: 'user', content: DELEG, display_kind: 'async_delegation_complete', timestamp: sec(-40000) },
+    { id: 64962, role: 'assistant', content: REPLY, timestamp: sec(-38000) },
+  ]);
+
+  let phase = { rows: before, count: 3 };
+  const container = buildTestContainer({
+    configOverrides: { wakeDelivery: { enabled: true } },
+    routes: {
+      'GET http://127.0.0.1:8642/api/sessions': () => ({
+        body: { object: 'list', data: [sessionRow(SID, { messageCount: phase.count })] },
+      }),
+      [`GET http://127.0.0.1:8642/api/sessions/${encodeURIComponent(SID)}/messages`]: () => ({
+        body: { object: 'list', session_id: SID, data: phase.rows },
+      }),
+    },
+  });
+  seedRunningCursor(container, SID, 0, 0);
+
+  try {
+    await pollTwice(container);
+    assert.equal(container.sender.dryRunLog.length, 1, '改写前应当正常投递一次');
+    assert.equal(sentText(container), REPLY);
+
+    // Hermes 压缩：同一会话行号整体重分配，message_count 变化触发重扫
+    phase = { rows: after, count: 2 };
+    await pollTwice(container);
+    assert.equal(
+      container.sender.dryRunLog.length,
+      1,
+      `改写后不得把同一份委派转述再推一遍，实际 ${container.sender.dryRunLog.length} 条`,
+    );
+    // 稳定键已落盘：行号去重键（anchorKey）与稳定去重键都在
+    assert.equal(container.wakeCursorStore.isHandled(`${SID}#deleg_34353c83`), true);
   } finally {
     container.cleanup();
   }

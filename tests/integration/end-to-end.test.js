@@ -593,3 +593,43 @@ test('收集表情：群聊非唤醒图片先 deferred、收集会话内自动�
     : 0;
   assert.equal(after, before, '非收集状态下群聊路过图片不该新增本地文件');
 });
+
+test('上游把同一段回复流两遍（中途重试重放）→ 桥接只发一次，首段不复读', async (t) => {
+  const first = '这是第一段比较长的内容。';
+  const second = '这是第二段比较长的内容。';
+  const full = first + second;
+  const replayModel = {
+    async generate(req, opts = {}) {
+      // 第一次尝试正常流完；随后连接中断、上游从头重放同一段（content-filter
+      // fallback / 网络重试都会长成这个形状）
+      opts.onText?.(full);
+      opts.onText?.(full);
+      return {
+        correlationId: req.correlationId,
+        responseId: 'r-replay',
+        model: 'replay-model',
+        rawText: full,
+        toolCalls: [],
+        usage: { inputTokens: 0, outputTokens: 0 },
+        latencyMs: 1,
+      };
+    },
+    async ping() {
+      return { ok: true, detail: 'ok' };
+    },
+  };
+  const container = buildTestContainer({ modelAdapter: replayModel });
+  t.after(() => container.cleanup());
+
+  await container.inboundFlow.handleEvent(loadFixture('group-at-bot').event);
+  await settle();
+
+  const messages = container.sender.dryRunLog.map((e) => e.message);
+  assert.equal(
+    messages.length,
+    2,
+    `两段内容只应发两条，实际 ${messages.length}: ${JSON.stringify(messages)}`,
+  );
+  assert.equal(messages.filter((m) => m.includes('第一段比较长')).length, 1, '第一段只发一次');
+  assert.equal(messages.filter((m) => m.includes('第二段比较长')).length, 1, '第二段只发一次');
+});

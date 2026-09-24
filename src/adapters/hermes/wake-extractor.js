@@ -26,16 +26,28 @@
  *        assistant 行**；等不到就交给兜底提示。谁来叫醒模型由编排层决定（见 wake-flow）。
  *
  * 因此这里的输出契约是：
- *   deliveries: { kind: 'wake' | 'fallback', rowId, anchorKey, text, at }[]
+ *   deliveries: { kind: 'wake' | 'fallback', rowId, anchorKey, stableKey, dedupKey, text, at }[]
  *     —— 内容永远只会是 assistant 的回复，或系统级兜底提示；内部 user 汇报行绝不出现。
  *        兜底提示也只对 Hermes 自己的 `[IMPORTANT: …]` 进程信封摘正文，
  *        委派完成信封 / 桥接自投递的提示词一律换成通用文案（见 isSummarizableNotice）。
- *   delegations: { rowId, anchorKey, text, at }[]
+ *   delegations: { rowId, anchorKey, stableKey, text, at }[]
  *     —— 仍在等模型转述的委派完成锚点（编排层据此自投递一次唤醒轮）。
  *        text 是 Hermes 写给 agent 的内部信封，编排层只允许从中抠 deleg id 做短引用，
  *        绝不能再把它拼进给模型的提示词（否则同一份报告会在会话上下文里堆两份）。
  * 其中 anchorKey 用于跨轮次去重（会话 id + 锚点行号）。
+ *
+ * ⚠️ 单靠 anchorKey（会话 id + 行号）不够：Hermes 压缩/改写 transcript 时会
+ * **重新分配消息 id**（实测：同一条委派完成行从 64891 变成 64961，整段 +70）。
+ * 游标还停在旧 id 上，于是整段已被投递过的内容会被当成新行重扫，同一个唤醒块
+ * 换个行号又落进 deliveries —— 这就是「异步通知整段被投递两遍」的根因。
+ * 为此每个块额外带两个**与行号无关**的稳定键（见 noticeRefOf/shortHash）：
+ *   stableKey = 会话 id + 稳定标识（deleg_xxx / proc_xxx，取不到才退回通知首行哈希）
+ *   dedupKey  = stableKey + 投递正文哈希
+ * 编排层据此跨改写去重：stableKey 拦「同一个任务的通知/转述再投一次」，
+ * dedupKey 再带上正文，避免把同一个进程的多次 watch_match 误merge成一条。
  */
+
+import { createHash } from 'node:crypto';
 
 /** Hermes 内部通知信封的固定前缀（tools/process_registry_notifications.py: format_process_notification） */
 export const NOTICE_ENVELOPE_PREFIX = '[IMPORTANT:';
@@ -73,6 +85,29 @@ export function delegationRefOf(noticeText) {
   const firstLine = String(noticeText ?? '').split('\n', 1)[0] ?? '';
   const match = /(deleg_[A-Za-z0-9]+)/.exec(firstLine);
   return match ? match[1] : '';
+}
+
+/**
+ * 从任意内部通知正文里抠出稳定的任务标识（deleg_xxx / proc_xxx）。
+ *
+ * 取「先出现的那一个」：Hermes 的进程完成信封正文以 `Background process proc_xxx`
+ * 开头（可能在后文附带 deleg 归属），委派完成信封则以 `[ASYNC DELEGATION … deleg_xxx]`
+ * 开头；两种形状都取到各自真正的主标识。取消/取不到返回空串。
+ *
+ * 稳定性来源：这些 id 由 Hermes 生成、写在通知正文里，**不随 transcript 压缩
+ * 重新分配的行号变化**，所以能跨改写去重（见文件头）。
+ *
+ * @param {string} noticeText
+ * @returns {string}
+ */
+export function noticeRefOf(noticeText) {
+  const match = /(deleg_[A-Za-z0-9]+|proc_[A-Za-z0-9]+)/.exec(String(noticeText ?? ''));
+  return match ? match[1] : '';
+}
+
+/** 12 位短哈希：只用于去重键，不承载安全语义 */
+export function shortHash(text) {
+  return createHash('sha1').update(String(text ?? '')).digest('hex').slice(0, 12);
 }
 
 /**
@@ -211,8 +246,8 @@ export function renderFallbackNotice(noticeText, template, { summarize = true } 
  * @param {number} [opts.fallbackAfterMs=600000]
  * @param {string} [opts.fallbackNotice]
  * @returns {{
- *   deliveries: Array<{kind: string, rowId: number, anchorKey: string, text: string, at: number}>,
- *   delegations: Array<{rowId: number, anchorKey: string, text: string, at: number}>,
+ *   deliveries: Array<{kind: string, rowId: number, anchorKey: string, stableKey: string, dedupKey: string, text: string, at: number}>,
+ *   delegations: Array<{rowId: number, anchorKey: string, stableKey: string, text: string, at: number}>,
  *   nextRowId: number,
  *   openBlock: null | {anchorRowId: number, anchorKey: string, kind: string, partCount: number, at: number}
  * }}
@@ -238,9 +273,27 @@ export function extractDetachedDeliveries(messages, opts = {}) {
   const delegations = [];
   const fresh = (at) => maxAgeMs <= 0 || !at || now - at <= maxAgeMs;
   const anchorKeyOf = (rowId) => `${sessionId}#${rowId}`;
+  /**
+   * 与行号无关的稳定块标识：优先用通知里的 deleg_/proc_ id；
+   * 退而求其次用「通知首个非空行」的哈希（同一个块在改写前后内容一致）。
+   */
+  const stableKeyOf = (notice) => {
+    const ref = noticeRefOf(notice);
+    if (ref) return `${sessionId}#${ref}`;
+    const firstLine = String(notice ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? '';
+    return `${sessionId}#h${shortHash(firstLine)}`;
+  };
+  /** stableKey + 投递正文哈希：正文归一化空白，跨 \r\n 改写也稳定 */
+  const dedupKeyOf = (notice, text) =>
+    `${stableKeyOf(notice)}#${shortHash(String(text ?? '').replace(/\s+/g, ' ').trim())}`;
   const delegationOf = (anchorRowId, text, at) => ({
     rowId: anchorRowId,
     anchorKey: anchorKeyOf(anchorRowId),
+    // 转述唤醒用稳定键：改写后行号变了也不会再叫醒一次
+    stableKey: stableKeyOf(text),
     text,
     at,
   });
@@ -257,6 +310,8 @@ export function extractDetachedDeliveries(messages, opts = {}) {
           kind: 'wake',
           rowId: block.anchorRowId,
           anchorKey: anchorKeyOf(block.anchorRowId),
+          stableKey: stableKeyOf(block.notice),
+          dedupKey: dedupKeyOf(block.notice, text),
           text,
           at: block.at,
         });
@@ -268,13 +323,18 @@ export function extractDetachedDeliveries(messages, opts = {}) {
     // 委派完成信封、桥接自投递的提示词都只允许换成通用占位。
     if (fallbackAllowed && fallbackAfterMs > 0 && block.at && now - block.at >= fallbackAfterMs) {
       if (fresh(block.at) || maxAgeMs <= 0) {
+        const fallbackText = renderFallbackNotice(block.notice, fallbackNotice, {
+          summarize: isSummarizableNotice(block.notice),
+        });
         deliveries.push({
           kind: 'fallback',
           rowId: block.anchorRowId,
           anchorKey: anchorKeyOf(block.anchorRowId),
-          text: renderFallbackNotice(block.notice, fallbackNotice, {
-            summarize: isSummarizableNotice(block.notice),
-          }),
+          stableKey: stableKeyOf(block.notice),
+          // 兜底提示正文可能对多个进程是同一句通用文案，但 stableKey（proc id）不同，
+          // 所以不会互相顶掉；同一个进程的兜底重复出现才会被去重。
+          dedupKey: dedupKeyOf(block.notice, fallbackText),
+          text: fallbackText,
           at: block.at,
         });
       }

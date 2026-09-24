@@ -19,7 +19,7 @@ bridge.config.json
 # 3. 运行期持久化缓存与日志
 # ==========================================
 .cache/
-shadow/
+/shadow/
 *.log
 *.log.*
 *.tmp*

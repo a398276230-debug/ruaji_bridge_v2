@@ -25,6 +25,7 @@ import { mergeUnique } from '../storage/portrayal-store.js';
 import { getIdentityRole, canUseCommand } from '../core/permission-policy.js';
 
 import { findCommand } from '../core/command-registry.js';
+import { sendLaneKey } from './session-send-queue.js';
 
 /**
  * 解析命令末尾的数字参数（如 /画像 @某人 50、/冷暴力 @某人 30）。
@@ -64,6 +65,8 @@ export class CommandFlow {
     this.sessions = opts.sessionStore ?? null;
     this.memes = opts.memeStore;
     this.sender = opts.sender;
+    /** 会话级输出互斥（可选注入）：命令回执不许插进主回复/唤醒通知的分段序列里 */
+    this.outputQueue = opts.sessionSendQueue ?? null;
     this.config = opts.config;
     this.log = opts.logger?.child({ component: 'command-flow' }) ?? console;
     this.hostUrl = opts.config?.unifiedHost?.baseUrl || '';
@@ -440,19 +443,23 @@ export class CommandFlow {
    *        如 { replyToMessageId } 让回执带上 OneBot 引用气泡
    */
   _reply(inbound, text, command, extraMetadata = {}) {
-    this.sender.enqueue(
-      createOutboundMessage({
-        correlationId: inbound.correlationId,
-        sessionId: inbound.sessionId,
-        target: {
-          type: inbound.messageType,
-          id: inbound.messageType === MESSAGE_TYPES.GROUP ? inbound.groupId : inbound.userId,
-        },
-        replyToUserId: inbound.userId,
-        text,
-        metadata: { isFirst: true, command, ...extraMetadata },
-      }),
-    );
+    const outbound = createOutboundMessage({
+      correlationId: inbound.correlationId,
+      sessionId: inbound.sessionId,
+      target: {
+        type: inbound.messageType,
+        id: inbound.messageType === MESSAGE_TYPES.GROUP ? inbound.groupId : inbound.userId,
+      },
+      replyToUserId: inbound.userId,
+      text,
+      metadata: { isFirst: true, command, ...extraMetadata },
+    });
+    if (this.outputQueue) {
+      // 同目标串行：若主回复/唤醒通知正占着车道，先积压，等它整轮发完再补发
+      this.outputQueue.enqueue(sendLaneKey(outbound.target), outbound, { owner: 'command' });
+    } else {
+      this.sender.enqueue(outbound);
+    }
     this.log.info('命令已执行', { correlationId: inbound.correlationId, command });
     return { handled: true, command };
   }

@@ -58,6 +58,8 @@ test('委派唤醒：模型上下文里原生报告只出现一次（token 不�
       }),
     },
   });
+  // 模拟"桥接已经在跑"：冷启动保护不给无游标会话投递历史块
+  container.wakeCursorStore.setCursor(PRIVATE_SESSION, 2, { messageCount: 2 });
 
   try {
     await container.wakeFlow.pollOnce();

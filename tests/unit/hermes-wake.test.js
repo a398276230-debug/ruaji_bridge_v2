@@ -19,6 +19,7 @@ import {
   isDelegationRow,
   isDetachedAnchorRow,
   isSummarizableNotice,
+  noticeRefOf,
   parseSessionTarget,
   renderFallbackNotice,
   resolveSessionTarget,
@@ -345,4 +346,56 @@ test('toEpochMs 兼容秒与毫秒两种时间戳', () => {
   assert.equal(toEpochMs(1790000000.5), 1790000000500);
   assert.equal(toEpochMs(1790000000500), 1790000000500);
   assert.equal(toEpochMs(null), 0);
+});
+
+test('noticeRefOf：进程信封取 proc_，委派信封取 deleg_，取先出现的那个', () => {
+  assert.equal(noticeRefOf(notice('proc_eb3c30df6b94')), 'proc_eb3c30df6b94');
+  assert.equal(noticeRefOf('[ASYNC DELEGATION BATCH COMPLETE — deleg_34353c83]\n报告'), 'deleg_34353c83');
+  // 进程信封正文里若附带 deleg 归属，主标识仍是开头的 proc
+  assert.equal(noticeRefOf(`[IMPORTANT: Background process proc_1 completed.\nFrom deleg_2\nOutput:\nok]`), 'proc_1');
+  assert.equal(noticeRefOf('普通内部提示，没有 id'), '');
+  assert.equal(noticeRefOf(null), '');
+});
+
+test('stableKey/dedupKey 跨 transcript 改写（行号重分配）不变：同一委派转述绝不二次投递', () => {
+  const SID = 'qq_private_3054039169_20260924_2_#02';
+  const DELEG = '[ASYNC DELEGATION BATCH COMPLETE — deleg_34353c83]\n--- RESULT ---\n2000 字报告';
+  const RELAY_PROMPT = '（内部机制提示，不需要回应这句话本身）你之前派出的后台子任务（deleg_34353c83）已经跑完了，请自行阅读上文并简要转述。';
+  const REPLY = '刚才去全网把 SauceNAO、Google Lens 和 Yandex 全都扫了一遍，没查到确凿出处呢。';
+
+  // 改写前：委派行 + 桥接自投递的唤醒提示词行 + 模型转述（投递锚点是提示词行）
+  const before = extractDetachedDeliveries([
+    userRow(64891, DELEG, { display_kind: DELEGATION_DISPLAY_KIND }),
+    userRow(64892, RELAY_PROMPT, { display_kind: INTERNAL_NOTIFICATION_DISPLAY_KIND }),
+    assistantRow(64893, REPLY),
+  ], { sessionId: SID, emitOpenBlocks: true });
+  assert.equal(before.deliveries.length, 1);
+  assert.equal(before.deliveries[0].rowId, 64892);
+  assert.equal(before.deliveries[0].anchorKey, `${SID}#64892`);
+
+  // 改写后：Hermes 把整段重新分配 id（+69），自投递提示词行被合并进委派行
+  const after = extractDetachedDeliveries([
+    userRow(64961, DELEG, { display_kind: DELEGATION_DISPLAY_KIND }),
+    assistantRow(64962, REPLY),
+  ], { sessionId: SID, emitOpenBlocks: true });
+  assert.equal(after.deliveries.length, 1);
+  assert.equal(after.deliveries[0].rowId, 64961);
+  assert.notEqual(after.deliveries[0].anchorKey, before.deliveries[0].anchorKey, '行号去重键确实变了（这就是历史重复投递的根因）');
+
+  // 稳定键不变 → 编排层能拦住第二次投递；正文空白归一化也保证 \r\n 改写不影响
+  assert.equal(after.deliveries[0].stableKey, before.deliveries[0].stableKey);
+  assert.equal(after.deliveries[0].stableKey, `${SID}#deleg_34353c83`);
+  assert.equal(after.deliveries[0].dedupKey, before.deliveries[0].dedupKey);
+});
+
+test('同一个进程的多次 watch_match：stableKey 相同但 dedupKey 不同，不能互相吞掉', () => {
+  const SID = 'qq_group_1_20260922_1';
+  const watch = (pattern, reply) => [
+    userRow(1, `[IMPORTANT: Background process proc_same matched watch pattern "${pattern}".\nCommand: cmd\nMatched output:\n${pattern}]`),
+    assistantRow(2, reply),
+  ];
+  const first = extractDetachedDeliveries(watch('ERROR', '抓到错误了'), { sessionId: SID, emitOpenBlocks: true });
+  const second = extractDetachedDeliveries(watch('READY', '服务起来了'), { sessionId: SID, emitOpenBlocks: true });
+  assert.equal(first.deliveries[0].stableKey, second.deliveries[0].stableKey, '同一个进程 → 稳定键相同');
+  assert.notEqual(first.deliveries[0].dedupKey, second.deliveries[0].dedupKey, '正文不同 → 去重键必须不同');
 });

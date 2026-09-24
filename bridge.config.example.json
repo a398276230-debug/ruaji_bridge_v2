@@ -60,6 +60,7 @@
     "fallbackAfterMs": 600000,
     "fallbackNotice": "⚠️ 后台任务已结束，但瑞姬没能生成回复内容\n{notice}",
     "retainDays": 7,
+    "coldStartSnapshot": true,
     "source": "api_server",
     "anchor": {
       "enabled": true,
@@ -99,7 +100,8 @@
     "maxResponseChars": 100000,
     "truncateToChars": 50000,
     "maxSendAgeMs": 600000,
-    "maxSendRetries": 10
+    "maxSendRetries": 10,
+    "outputMutex": { "enabled": true, "timeoutMs": 90000 }
   },
 
   "fastAck": {

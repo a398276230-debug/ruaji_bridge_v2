@@ -148,13 +148,25 @@ export class OpenAiCompatibleAdapter {
 
     let lastError = null;
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      // 本次尝试是否已经把可见文本交给消费者（onText）。一旦吐过字，重试就会
+      // 从头再流一遍，消费者那边看到的就是「第一段话发两遍」。
+      const streamState = { emitted: false };
       try {
-        return await this._generateOnce(modelRequest, opts);
+        return await this._generateOnce(modelRequest, { ...opts, streamState });
       } catch (err) {
         lastError = err;
         // 取消、鉴权、协议错误都不重试
         if (err?.name === 'AbortError') throw err;
         if (err instanceof ModelError && !err.retryable) throw err;
+        if (streamState.emitted) {
+          // 宁可少发也不复读：已经发出去的前缀撤不回来，重试只会让它出现两次。
+          this.log.warn('流式响应已吐出可见文本，放弃重试以防复读', {
+            attempt: attempt + 1,
+            correlationId: modelRequest.correlationId,
+            error: err.message,
+          });
+          throw err;
+        }
         if (attempt < this.maxRetries) {
           this.log.warn('模型调用失败，重试', {
             attempt: attempt + 1,
@@ -222,7 +234,7 @@ export class OpenAiCompatibleAdapter {
       }
 
       const parsed = stream
-        ? await this._readStream(res, opts.onText)
+        ? await this._readStream(res, opts.onText, opts.streamState)
         : await this._readJson(res);
 
       return createModelResponse({
@@ -255,7 +267,7 @@ export class OpenAiCompatibleAdapter {
   }
 
   /** 解析 SSE 流。合并自 hermes_adapter.js:150-199 与 bridge.js:945-966。 */
-  async _readStream(res, onText) {
+  async _readStream(res, onText, streamState) {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -290,6 +302,8 @@ export class OpenAiCompatibleAdapter {
       const delta = json.choices?.[0]?.delta;
       if (delta?.content) {
         text += delta.content;
+        // 标记「本次尝试吐过可见文本」：上层据此禁止重试，避免首段复读
+        if (streamState) streamState.emitted = true;
         if (onText) onText(delta.content);
       }
       if (Array.isArray(delta?.tool_calls)) toolCalls.push(...delta.tool_calls);
