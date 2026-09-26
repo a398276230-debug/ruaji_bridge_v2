@@ -14,6 +14,10 @@
  *
  * 命令文本一律取自 textOnly（剔除全部 CQ 码），并剥掉开头的名字呼唤——
  * 用 content 会因为 @ 被转成 " @瑞姬 " 而导致 "@瑞姬 /new" 命中不了。
+ *
+ * 群聊里还要过一道**定向门禁**（isCommandTargetedAtBot）：@ 了别人又没 @ 瑞姬的
+ * 消息里的 "/xxx" 是发给那个人的，不是给瑞姬的命令（历史事故：@其他 bot /stop
+ * 误触发主人的急停）。私聊与 @ 到瑞姬 / 叫名字 / 不 @ 人的消息照旧。
  */
 
 import { createOutboundMessage, MESSAGE_TYPES } from '../contracts/messages.js';
@@ -43,6 +47,26 @@ export function parseTrailingInt(text, { min, max, fallback }) {
   const parsed = parseInt(matched[1], 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.max(min, Math.min(max, parsed));
+}
+
+/**
+ * 群聊命令定向门禁：这条 "/xxx" 是不是发给瑞姬的？
+ *
+ * 私聊没有第三方在场，永远算。群聊里 @ 了别人（@别的 bot / @某人 / @全体成员）
+ * 又没有 @ 瑞姬时，这条消息是发给那个人的——里面的 "/stop" 只能是给对方的命令，
+ * 绝不能拿去掐瑞姬自己在途的生成（实测事故：主人 @其他 bot 发 /stop，桥接误当成
+ * 主人的急停执行了）。同时 @ 了瑞姬与别人时以 @ 瑞姬 为准（isAtBot 直接放行）。
+ *
+ * 判定只读规范化后的契约字段：isAtBot / isAtOthers 都由
+ * adapters/napcat/inbound-normalizer 从原始 CQ 码与 segment 里算好，编排层不自己
+ * 解析 @ 码（架构职责分层）。
+ *
+ * 群聊里既不 @ 人也不叫名字的 "/xxx" 照旧放行——保留原行为，只收口"@ 了别人"这一类。
+ */
+export function isCommandTargetedAtBot(inbound) {
+  if (inbound?.messageType !== MESSAGE_TYPES.GROUP) return true;
+  if (inbound?.flags?.isAtBot === true) return true;
+  return inbound?.flags?.isAtOthers !== true;
 }
 
 export class CommandFlow {
@@ -79,6 +103,19 @@ export class CommandFlow {
   async handle(inbound) {
     const cmd = deriveCommandText(inbound.text, this.config.identity.botName);
     if (!cmd.startsWith('/') && !cmd.startsWith('#')) return { handled: false, command: null };
+
+    // 群聊定向门禁：@ 了别人又没 @ 瑞姬的消息里的命令不是给她的。
+    // 返回 handled:false 而不是静默吞掉——这条消息只是"不是命令"，后续该走
+    // 正常群聊链路（裁决 / 忽略 / 插话），不该因为正文带个斜杠就被特殊对待。
+    if (!isCommandTargetedAtBot(inbound)) {
+      this.log.debug('群聊命令未指向机器人，按普通消息放行', {
+        correlationId: inbound.correlationId,
+        groupId: inbound.groupId,
+        userId: inbound.userId,
+        command: cmd,
+      });
+      return { handled: false, command: null };
+    }
 
     const entry = findCommand(cmd);
     const role = getIdentityRole(inbound.userId, this.config.identity);
@@ -441,8 +478,13 @@ export class CommandFlow {
    * 命令/回执的直发路径（不过模型）。
    * @param {object} extraMetadata 追加到 OutboundMessage.metadata 的字段，
    *        如 { replyToMessageId } 让回执带上 OneBot 引用气泡
+   * @param {object} [opts]
+   * @param {boolean} [opts.immediate] true = 即时回执（redirect ack 这类
+   *        "生成在途也要立刻可见"的提示），绕过会话输出租约直发 Sender，
+   *        不积压到整轮回复之后。内容型命令回执不要打开这个开关。
+   * @param {string} [opts.owner] 观测用的发送方标注（默认 'command'）
    */
-  _reply(inbound, text, command, extraMetadata = {}) {
+  _reply(inbound, text, command, extraMetadata = {}, opts = {}) {
     const outbound = createOutboundMessage({
       correlationId: inbound.correlationId,
       sessionId: inbound.sessionId,
@@ -454,9 +496,17 @@ export class CommandFlow {
       text,
       metadata: { isFirst: true, command, ...extraMetadata },
     });
+    const owner = opts.owner ?? 'command';
     if (this.outputQueue) {
-      // 同目标串行：若主回复/唤醒通知正占着车道，先积压，等它整轮发完再补发
-      this.outputQueue.enqueue(sendLaneKey(outbound.target), outbound, { owner: 'command' });
+      const laneKey = sendLaneKey(outbound.target);
+      if (opts.immediate) {
+        // 即时回执：主回复正占着车道也必须现在送达（插进在途分段之间是有意的），
+        // 否则"补充已生效"的提示会被压到整轮生成之后，等于失效。
+        this.outputQueue.enqueueImmediate(laneKey, outbound, { owner });
+      } else {
+        // 同目标串行：若主回复/唤醒通知正占着车道，先积压，等它整轮发完再补发
+        this.outputQueue.enqueue(laneKey, outbound, { owner });
+      }
     } else {
       this.sender.enqueue(outbound);
     }

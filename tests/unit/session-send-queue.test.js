@@ -7,7 +7,8 @@
  *      在最终送达顺序上严格连续，不会交错；
  *   3. 不同 target 互不阻塞；
  *   4. 投递迟迟不结算时到点强制放行（不死锁）；
- *   5. 命令回执这类直发消息在车道被占时积压，等整轮发完再补发。
+ *   5. 命令回执这类直发消息在车道被占时积压，等整轮发完再补发；
+ *   6. 即时回执（enqueueImmediate）则绕过车道立刻入队，允许插进在途分段。
  */
 
 import test from 'node:test';
@@ -171,6 +172,33 @@ test('车道空闲时直发立即入队', async () => {
   assert.equal(h.queue.enqueue(KEY, msg('CMD'), { owner: 'command' }), true);
   assert.equal(h.sender.queue.length, 1);
   await h.deliverNext();
+});
+
+test('即时直发：车道被占也立刻入队，不积压等整轮发完', async () => {
+  const h = makeHarness();
+  const leaseA = await h.queue.acquire(KEY, { owner: 'reply' });
+  leaseA.enqueue(msg('A1'));
+  leaseA.enqueue(msg('A2'));
+
+  const ack = msg('ACK');
+  assert.equal(h.queue.enqueueImmediate(KEY, ack, { owner: 'redirect-ack' }), true);
+  assert.deepEqual(
+    h.sender.queue.map((m) => m.text),
+    ['A1', 'A2', 'ACK'],
+    '即时回执必须立刻进 Sender（已在队列里的分段之前不能抢），而不是留在 backlog 里等整轮发完',
+  );
+  assert.equal(h.queue.getStatus().backlog, 0, '即时回执不许进 backlog');
+  assert.equal(h.queue.getStatus().bypasses, 1, '绕过次数要可观测');
+  assert.equal(ack.metadata.sendOwner, 'redirect-ack', '标注发送方便于排障');
+  assert.equal(ack.metadata.sendLane, KEY);
+  assert.equal(h.queue.isBusy(KEY), true, '即时直发不得干扰在途租约');
+
+  await h.deliverNext(); // A1
+  await h.deliverNext(); // A2
+  await h.deliverNext(); // ACK
+  await leaseA.release();
+  assert.deepEqual(h.delivered.map((m) => m.text), ['A1', 'A2', 'ACK']);
+  assert.equal(h.queue.isBusy(KEY), false, '即时回执不延长在途轮');
 });
 
 test('未提供 eventBus 时释放退化为"发送队列空闲即视为发完"', async () => {

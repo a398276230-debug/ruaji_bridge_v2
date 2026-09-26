@@ -128,6 +128,14 @@ export class InboundNormalizer {
       );
     const isNameCall = this.namePattern.test(text);
 
+    // 本条消息 @ 了哪些"不是瑞姬"的对象（@某个 bot / @某人 / @全体成员）。
+    // 命令定向门禁（command-flow.isCommandTargetedAtBot）靠它区分"发给别人的 /stop"
+    // 和"发给瑞姬的 /stop"。算在这一层是因为 @ 码/segment 解析只属于 adapters/napcat，
+    // 编排层只读契约字段（架构职责分层）。
+    const isAtOthers = extractAtTargets(rawMessage, segments).some(
+      (id) => String(id) !== String(this.identity.robotId),
+    );
+
     // 引用消息：先只解析来源（必要时发一次 get_msg），拿到"引用的是不是机器人
     // 自己"之后才能决定本条消息的媒体要不要落盘（见 _shouldIngestMedia）。
     const quoteSource = await this._resolveQuoteSource(segments, rawMessage, { signal: ctx.signal });
@@ -198,6 +206,7 @@ export class InboundNormalizer {
         role: getIdentityRole(userId, this.identity),
         isAtBot,
         isNameCall,
+        isAtOthers,
         isCommand: false, // 由 command-flow 判定后回填
         hasImage: media.some((m) => m.kind === 'image'),
         hasFile: media.some((m) => m.kind === 'file'),

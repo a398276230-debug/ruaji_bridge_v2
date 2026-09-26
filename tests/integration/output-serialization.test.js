@@ -176,3 +176,66 @@ test('缺陷一：唤醒通知不得插进回复分段之间（同目标严格�
     container.cleanup();
   }
 });
+
+test('redirect 回执：生成在途时立刻可见，不排队等整轮回复发完', async () => {
+  const { adapter, release } = makeGatedAdapter();
+  const container = buildTestContainer({
+    modelAdapter: adapter,
+    configOverrides: { meme: { matcherEnabled: false } },
+  });
+
+  try {
+    const inbound = createInboundMessage({
+      correlationId: 'corr-redirect-ack',
+      messageId: 'msg-2',
+      timestamp: Math.floor(NOW_MS / 1000),
+      platform: 'qq',
+      selfId: '398276230',
+      userId: '10000001',
+      groupId: '777',
+      messageType: 'group',
+      rawMessage: '瑞姬 补充：改成先回我这条',
+      text: '补充：改成先回我这条',
+      content: ' @瑞姬 补充：改成先回我这条',
+      sender: { nickname: '主人', displayName: '主人' },
+      flags: { isAtBot: true, isOwner: true },
+    });
+
+    const replyPromise = container.replyFlow.run({
+      inbound,
+      triggerType: TRIGGER_TYPES.AT,
+      contextBlocks: [],
+      signal: null,
+    });
+
+    // 前两段已发出、第三段被闸门卡住 → 回复流持有输出租约，生成仍在进行
+    await waitFor(() => container.sender.dryRunLog.length >= 2);
+    assert.equal(container.sessionSendQueue.isBusy(LANE), true, '回复流应当持有输出租约');
+
+    // 主人补充被 Hermes 原生 redirect 并入在途轮 → 回执此刻必须已经发出
+    container.inboundFlow._ackRedirect(inbound);
+    await flush();
+
+    const midTexts = container.sender.dryRunLog.map((e) => e.message);
+    assert.ok(
+      midTexts.some((t) => t.includes('已并入当前回复继续生成')),
+      `在途期间回执必须已发出，实际：${JSON.stringify(midTexts)}`,
+    );
+    assert.ok(
+      !midTexts.some((t) => t.includes('第三段文字内容')),
+      '回执发出时第三段还没生成（证明确实是即时直发，不是等整轮结束才补发）',
+    );
+
+    release();
+    await replyPromise;
+    await flush();
+
+    const texts = container.sender.dryRunLog.map((e) => e.message);
+    const ackIdx = texts.findIndex((t) => t.includes('已并入当前回复继续生成'));
+    const thirdIdx = texts.findIndex((t) => t.includes('第三段文字内容'));
+    assert.ok(thirdIdx > ackIdx, `回执必须早于回复最后一段：${JSON.stringify(texts)}`);
+  } finally {
+    release();
+    container.cleanup();
+  }
+});

@@ -191,8 +191,8 @@ test('busy + 主人消息 + redirect 成功：不打断、不排队、回执一�
   });
 
   const acks = [];
-  inboundFlow.commandFlow._reply = (inbound, text, command) => {
-    acks.push(text);
+  inboundFlow.commandFlow._reply = (inbound, text, command, extraMetadata, opts) => {
+    acks.push({ text, opts });
     return { handled: true, command };
   };
 
@@ -205,7 +205,12 @@ test('busy + 主人消息 + redirect 成功：不打断、不排队、回执一�
   assert.equal(buf.pending.length, 0, 'redirect 已并入在途轮，消息不能再排队等下一轮');
   assert.equal(buf.timer, null, '不应调度新生成');
   assert.equal(acks.length, 1, '回执只发一条');
-  assert.ok(acks[0].includes('并入'), '回执内容来自 redirectAck.message');
+  assert.ok(acks[0].text.includes('并入'), '回执内容来自 redirectAck.message');
+  assert.equal(
+    acks[0].opts?.immediate,
+    true,
+    '回执必须即时直发：生成在途时走车道会被积压到整轮回复之后，等于失效',
+  );
 
   // 冷却期内第二条补充：redirect 照常生效，但不再刷回执
   await inboundFlow.handleEvent(

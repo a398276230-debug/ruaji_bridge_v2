@@ -397,7 +397,9 @@ export class InboundFlow {
     if (!this._lastRedirectAckAt) this._lastRedirectAckAt = new Map();
     this._lastRedirectAckAt.set(inbound.executionKey, now);
     try {
-      this.commandFlow._reply(inbound, ack.message, '/redirect-ack');
+      // immediate：回执必须在生成还在跑的时候就可见。走普通车道会被积压到
+      // 整轮回复之后才补发（"收到补充"变成"等你回完才说收到"），等于失效。
+      this.commandFlow._reply(inbound, ack.message, '/redirect-ack', {}, { immediate: true });
     } catch (err) {
       this.log.warn('redirect 回执发送失败（忽略）', { correlationId: inbound.correlationId, error: err.message });
     }
@@ -520,6 +522,7 @@ export class InboundFlow {
           timestamp: inbound.timestamp,
           isAtBot: inbound.flags.isAtBot,
           isNameCall: inbound.flags.isNameCall,
+          isAtOthers: inbound.flags.isAtOthers,
           isOwner: inbound.flags.isOwner,
           hasImage: inbound.flags.hasImage,
           hasFile: inbound.flags.hasFile,

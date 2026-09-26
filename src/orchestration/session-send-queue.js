@@ -21,6 +21,12 @@
  * 此时插进来仍会排在同一轮分段之间（这正是缺陷本身）。等到 message.sent 才释放，
  * 才真正做到"另一个 flow 必须等前一个 flow 完全发送完毕"。
  *
+ * **唯一的例外是即时回执**（`enqueueImmediate`）：redirect ack 这类"告诉用户
+ * 补充已生效"的提示，价值全在"生成还在跑的时候立刻可见"。它被压到整轮回复
+ * 末尾就等于失效，所以刻意绕过租约直发 Sender —— 允许插进在途分段之间是有意
+ * 为之，不属于上面要修的"分段被无关 flow 打乱"的缺陷。命令的内容型回执
+ * （/好感度、/收集表情…）不走这条路，照旧积压等整轮发完。
+ *
  * 降级：拿不到 eventBus 时无法确认终态，租约释放退化为"发送队列空闲即视为发完"
  * （Sender 暴露 pending / isSending；测试桩没有这两个属性时直接放行）。
  *
@@ -187,7 +193,7 @@ export class SessionSendQueue {
     /** txId -> SendLease（终态结算用） */
     this.txIndex = new Map();
     this.unsubscribe = null;
-    this.stats = { leases: 0, backlogged: 0, timeouts: 0 };
+    this.stats = { leases: 0, backlogged: 0, timeouts: 0, bypasses: 0 };
 
     if (opts.eventBus?.subscribe) {
       this.unsubscribe = opts.eventBus.subscribe(EVENTS.MESSAGE_SENT, 'session-send-queue', (envelope) => {
@@ -261,9 +267,30 @@ export class SessionSendQueue {
   }
 
   /**
+   * 即时直发（redirect ack 这类"必须马上看见"的回执）：**无视车道占位**
+   * 直接把消息交给 Sender。允许插进在途回复的分段之间 —— 这正是即时回执的
+   * 语义（补充已生效要立刻告诉用户），它不是"别的 flow 来抢车道"。
+   *
+   * 不入队车道、不计数、不参与租约结算：既不延长在途轮，也不会留下 backlog。
+   * @returns {boolean} 恒为 true（消息已交 Sender）
+   */
+  enqueueImmediate(targetKey, outbound, { owner = 'immediate' } = {}) {
+    const k = String(targetKey);
+    if (outbound?.metadata) {
+      if (outbound.metadata.sendOwner == null) outbound.metadata.sendOwner = owner;
+      if (outbound.metadata.sendLane == null) outbound.metadata.sendLane = k;
+    }
+    this.stats.bypasses += 1;
+    this.sender.enqueue(outbound);
+    return true;
+  }
+
+  /**
    * 一次性直发（命令回执这类单条消息）：车道空闲就立刻发；被占就先积压，
    * 等当前租约释放后紧接着发出去 —— 既不阻塞调用方（_reply 是同步的），
    * 也不插进别人的分段序列里。
+   *
+   * 需要"被占时也立刻发"的即时回执请用 `enqueueImmediate`。
    * @returns {boolean} true = 立即入队；false = 已积压，等当前轮发完
    */
   enqueue(targetKey, outbound, { owner = 'direct' } = {}) {

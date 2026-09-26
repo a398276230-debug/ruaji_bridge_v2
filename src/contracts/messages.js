@@ -77,6 +77,8 @@ export function createInboundMessage(input = {}) {
       role: input.flags?.isOwner === true ? 'owner' : (input.flags?.isAdmin === true ? 'admin' : 'member'),
       isAtBot: input.flags?.isAtBot === true,
       isNameCall: input.flags?.isNameCall === true,
+      /** 本条消息 @ 了瑞姬以外的人（含 @全体成员）；只在 adapters/napcat 层算 */
+      isAtOthers: input.flags?.isAtOthers === true,
       isCommand: input.flags?.isCommand === true,
       hasImage:
         input.flags?.hasImage === true ||
