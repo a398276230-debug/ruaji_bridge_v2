@@ -60,9 +60,56 @@ class ReplyPreflightTests(unittest.IsolatedAsyncioTestCase):
             if state == 'expired':
                 plugin.cold_violence_users['2'] = datetime.now() - timedelta(seconds=1)
             blocks = await adapter.provide_context(message)
-            self.assertEqual(any(b.detail.get('intercepted') for b in blocks), state in ['cold', 'blacklisted'])
-            self.assertTrue(all(not b.content for b in blocks), 'no cold notice or favour prompt on auto')
+            stopped = state in ['cold', 'blacklisted']
+            self.assertEqual(any(b.detail.get('intercepted') for b in blocks), stopped)
+            # 修复点：auto 轮也必须拿到逐字一致的静态规则块，否则 System Prompt
+            # 前缀会在手动互动轮 / 主动跟聊轮之间横跳，击穿 Prompt Cache。
+            injected = [b for b in blocks if '<FavorabilityPlugin>' in (b.content or '')]
+            self.assertEqual(len(injected), 0 if stopped else 1,
+                             'auto must inject the static favour block')
+            self.assertFalse(any('<MandatoryFooter>' in (b.content or '') for b in blocks),
+                             'auto must not inject the dynamic favour context')
             self.assertTrue(all(not b.error for b in blocks), 'no database access is required for auto')
+
+    async def test_auto_static_block_matches_manual_and_skips_user_data(self):
+        """静态块只依赖插件配置；auto 轮不得读写用户数据、不得追加动态上下文。"""
+        plugin = FavourManagerTool.__new__(FavourManagerTool)
+        plugin.__dict__.update(self.plugin.__dict__)
+        del plugin.check_reply_gate
+        calls = []
+        class _DB:
+            async def get_favour(self, user_id, session_id):
+                calls.append(('get_favour', user_id, session_id))
+                return None
+        plugin.db_manager = _DB()
+        self.extra['_bridge_trigger_type'] = 'ai_decision'
+        event = SimpleNamespace(get_sender_id=lambda: '2', get_extra=self.extra.get,
+                               stop_event=lambda: None)
+        req = SimpleNamespace(system_prompt='PERSONA', extra_user_content_parts=[])
+        await plugin.inject_favour_prompt(event, req)
+
+        static = plugin._build_static_favour_prompt()
+        self.assertEqual(req.system_prompt, 'PERSONA\n\n' + static)
+        self.assertEqual(req.extra_user_content_parts, [], 'auto must not inject dynamic context')
+        self.assertEqual(calls, [], 'auto must not read user favour records')
+        self.assertIn('<FavorabilityPlugin>', static)
+        self.assertNotIn('<MandatoryFooter>', static)
+        self.assertEqual(static, plugin._build_static_favour_prompt(), 'static block must be byte-stable')
+
+    async def test_auto_out_of_scope_session_injects_nothing(self):
+        """白名单外的会话连静态块也不注入（auto 与手动轮次保持一致）。"""
+        plugin = FavourManagerTool.__new__(FavourManagerTool)
+        plugin.__dict__.update(self.plugin.__dict__)
+        del plugin.check_reply_gate
+        plugin._get_session_id = lambda event: 'qq:group:9'
+        plugin.allowed_sessions = ['other']
+        self.extra['_bridge_trigger_type'] = 'ai_decision'
+        event = SimpleNamespace(get_sender_id=lambda: '2', get_extra=self.extra.get,
+                               stop_event=lambda: None)
+        req = SimpleNamespace(system_prompt='PERSONA', extra_user_content_parts=[])
+        await plugin.inject_favour_prompt(event, req)
+        self.assertEqual(req.system_prompt, 'PERSONA')
+        self.assertEqual(req.extra_user_content_parts, [])
 
     async def test_direct_cold_still_sends_notice(self):
         plugin = FavourManagerTool.__new__(FavourManagerTool)
@@ -88,6 +135,8 @@ class ReplyPreflightTests(unittest.IsolatedAsyncioTestCase):
             allowed_sessions=[], blocked_sessions=[], auto_blacklisted=set(),
             enable_cold_violence=True, cold_violence_users={},
             cold_violence_replies={'on_message': 'wait {time_str}'},
+            favour_mode='galgame', favour_increase_min=1, favour_increase_max=5,
+            favour_decrease_min=1, favour_decrease_max=5,
         )
         self.plugin.check_reply_gate = lambda event: gate_module.check_reply_gate(self.plugin, event)
         self.host = SimpleNamespace(mounts={'favour_ultra': SimpleNamespace(instance=self.plugin)})
