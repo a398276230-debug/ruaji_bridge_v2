@@ -14,6 +14,14 @@ import { ConfigError } from '../contracts/errors.js';
 
 const DEFAULTS = {
   mode: 'live',
+  toolProgress: {
+    enabled: false,
+    groupWhitelist: [],
+    privateEnabled: false,
+    privateWhitelist: [],
+    maxMessagesPerTurn: 8,
+    minIntervalMs: 1500,
+  },
   identity: { ownerId: '', adminIds: [], adminCommands: [], robotId: '', botName: '瑞姬', ownerTitle: '主人', rateLimitUsers: [], privateWhitelist: [], groupWhitelist: [] },
   napcat: {
     wsUrl: 'ws://127.0.0.1:3001',
@@ -431,6 +439,31 @@ function validate(config) {
 
   if (!['shadow', 'live', 'test'].includes(config.mode)) {
     errors.push(`mode 非法: ${config.mode}（应为 shadow | live | test）`);
+  }
+  const tp = config.toolProgress;
+  if (!isPlainObject(tp)) {
+    errors.push('toolProgress 非法（应为配置对象）');
+  } else {
+    for (const key of ['enabled', 'privateEnabled']) {
+      if (typeof tp[key] !== 'boolean') {
+        errors.push(`toolProgress.${key} 非法（应为布尔值）`);
+      }
+    }
+    const isPositiveQqId = (id) => (
+      typeof id === 'string' ? /^\d+$/.test(id) && /[1-9]/.test(id)
+        : typeof id === 'number' && Number.isSafeInteger(id) && id > 0
+    );
+    for (const key of ['groupWhitelist', 'privateWhitelist']) {
+      if (!Array.isArray(tp[key]) || !tp[key].every(isPositiveQqId)) {
+        errors.push(`toolProgress.${key} 非法（应为正整数 QQ ID 字符串或数字数组）`);
+      }
+    }
+    if (!Number.isInteger(tp.maxMessagesPerTurn) || tp.maxMessagesPerTurn < 1 || tp.maxMessagesPerTurn > 100) {
+      errors.push('toolProgress.maxMessagesPerTurn 非法（应为 1-100 的整数）');
+    }
+    if (typeof tp.minIntervalMs !== 'number' || !Number.isFinite(tp.minIntervalMs) || tp.minIntervalMs < 0) {
+      errors.push('toolProgress.minIntervalMs 非法（应为非负有限毫秒数）');
+    }
   }
   if (!config.napcat.wsUrl) errors.push('napcat.wsUrl 缺失');
   if (!config.napcat.httpUrl) errors.push('napcat.httpUrl 缺失');

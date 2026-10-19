@@ -1064,6 +1064,14 @@ async function renderSettings() {
   $('#cfg-private-whitelist').value = (d.config.identity?.privateWhitelist || []).join(', ');
   $('#cfg-group-whitelist').value = (d.config.identity?.groupWhitelist || []).map(formatGroupRateLimitEntry).filter(Boolean).join(', ');
 
+  // 工具进度播报（总开关同时约束群聊与私聊）
+  $('#cfg-tool-progress-enabled').checked = d.config.toolProgress?.enabled === true;
+  $('#cfg-tool-progress-private-enabled').checked = d.config.toolProgress?.privateEnabled === true;
+  $('#cfg-tool-progress-group-whitelist').value = (d.config.toolProgress?.groupWhitelist || []).join(', ');
+  $('#cfg-tool-progress-private-whitelist').value = (d.config.toolProgress?.privateWhitelist || []).join(', ');
+  $('#cfg-tool-progress-max-messages').value = d.config.toolProgress?.maxMessagesPerTurn ?? 8;
+  $('#cfg-tool-progress-min-interval').value = d.config.toolProgress?.minIntervalMs ?? 1500;
+
   // 2. 表情包与视觉打标
   $('#cfg-meme-collect').checked = Boolean(d.config.meme?.autoCollect);
   $('#cfg-meme-autotag').checked = Boolean(d.config.meme?.autoAiTagging);
@@ -1213,7 +1221,28 @@ async function saveSettings() {
       .map((s) => s.trim())
       .filter(Boolean);
 
+    const parseToolProgressWhitelist = (selector) => $(selector).value
+      .split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean);
+    const maxMessagesInput = $('#cfg-tool-progress-max-messages').value.trim();
+    const minIntervalInput = $('#cfg-tool-progress-min-interval').value.trim();
+    const maxMessagesPerTurn = maxMessagesInput === '' ? 8 : Number(maxMessagesInput);
+    const minIntervalMs = minIntervalInput === '' ? 1500 : Number(minIntervalInput);
+    if (!Number.isInteger(maxMessagesPerTurn) || maxMessagesPerTurn < 1 || maxMessagesPerTurn > 100) {
+      throw new Error('工具进度单轮播报上限应为 1-100 的整数');
+    }
+    if (!Number.isFinite(minIntervalMs) || minIntervalMs < 0) {
+      throw new Error('工具进度最小播报间隔应为非负有限毫秒数');
+    }
+
     const payload = {
+      toolProgress: {
+        enabled: $('#cfg-tool-progress-enabled').checked,
+        privateEnabled: $('#cfg-tool-progress-private-enabled').checked,
+        groupWhitelist: parseToolProgressWhitelist('#cfg-tool-progress-group-whitelist'),
+        privateWhitelist: parseToolProgressWhitelist('#cfg-tool-progress-private-whitelist'),
+        maxMessagesPerTurn,
+        minIntervalMs,
+      },
       mode: $('#cfg-mode').value,
       identity: {
         ownerId: $('#cfg-owner-id').value.trim(),

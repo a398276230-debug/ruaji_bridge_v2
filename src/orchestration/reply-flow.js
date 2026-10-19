@@ -23,6 +23,7 @@ import { TRIGGER_TYPES } from '../contracts/capabilities.js';
 import { classifyError } from '../contracts/errors.js';
 import { SentenceSplitter, splitIntoSegments } from './sentence-splitter.js';
 import { sendLaneKey } from './session-send-queue.js';
+import { createToolProgressReporter, isToolProgressEnabled } from './tool-progress.js';
 import { renderSystemText, renderUserMessage, renderUserContent } from './prompt-renderer.js';
 import { RESPONSE_TRANSFORM, createTransformContext } from '../middleware/index.js';
 
@@ -211,10 +212,33 @@ export class ReplyFlow {
 
     this.health?.increment('model', 'totalRequests');
 
+    const reportToolProgress = createToolProgressReporter({
+      config: this.config,
+      inbound,
+      signal,
+      enqueue: (text) => {
+        // 与正文共用本轮处理链及输出租约，但不跑好感度/表情/评分中间件。
+        state.chain = Promise.resolve(state.chain).then(() => {
+          if (signal?.aborted) return;
+          this._dispatch(state, createOutboundMessage({
+            correlationId: inbound.correlationId,
+            sessionId: inbound.sessionId,
+            target: {
+              type: inbound.messageType,
+              id: inbound.messageType === MESSAGE_TYPES.GROUP ? inbound.groupId : inbound.userId,
+            },
+            text,
+            metadata: { origin: 'tool-progress', disableAutoMention: true },
+          }));
+        }).catch(() => this.log.warn('工具进度投递失败（已忽略）'));
+      },
+    });
+
     let response;
     try {
       response = await this.models.generate(modelRequest, {
         signal,
+        onToolProgress: isToolProgressEnabled(this.config, inbound) ? reportToolProgress : undefined,
         onText: (chunk) => {
           for (const segment of splitter.push(chunk)) {
             // onText 是同步回调，这里不能 await；把每段的处理排进队列
@@ -223,6 +247,8 @@ export class ReplyFlow {
         },
       });
     } catch (err) {
+      // 异常/打断也要收束已排队的工作，不能在租约释放后才发送残留进度。
+      await state.chain;
       const classified = classifyError(err, inbound.correlationId);
       if (classified.preempted || signal?.aborted) {
         this.log.info('生成被打断，不推送旧回复', {

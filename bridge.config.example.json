@@ -1,6 +1,15 @@
 {
   "mode": "live",
 
+  "toolProgress": {
+    "enabled": false,
+    "groupWhitelist": [],
+    "privateEnabled": false,
+    "privateWhitelist": [],
+    "maxMessagesPerTurn": 8,
+    "minIntervalMs": 1500
+  },
+
   "favourUltraEnabled": false,
   "legacyAffectionEnabled": true,
 

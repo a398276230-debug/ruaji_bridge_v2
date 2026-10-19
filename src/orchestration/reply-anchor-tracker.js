@@ -51,7 +51,7 @@ export const DEFAULT_ANCHOR_MARKERS = Object.freeze([
 ]);
 
 /** 这些来源的出站消息不做锚点（它们是通知本身，不是用户的派发轮次） */
-const IGNORED_ORIGINS = new Set(['hermes-wake']);
+const IGNORED_ORIGINS = new Set(['hermes-wake', 'tool-progress']);
 
 export class ReplyAnchorTracker {
   /**

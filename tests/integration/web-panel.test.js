@@ -12,6 +12,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import vm from 'node:vm';
+import { DEFAULTS, loadConfig } from '../../src/core/config.js';
 
 import { buildTestContainer, seedAffection, seedMemes, flush } from '../helpers.js';
 import { MockModelAdapter } from '../../src/adapters/model/mock-model.js';
@@ -118,6 +120,128 @@ test('面板前端暴露群聊白名单输入框并接入保存载荷', async ()
     assert.ok(appJs.includes('#cfg-group-whitelist'), '前端应读写该输入框');
     assert.match(appJs, /groupWhitelist/, '保存载荷应带上 groupWhitelist');
   });
+});
+
+test('工具进度配置：默认回显、落盘、热更新、部分更新与旧客户端兼容', async () => {
+  await withPanel({}, async ({ container, base, get }) => {
+    const put = (body) => fetch(`${base}/api/config`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    assert.deepEqual((await get('/api/config')).body.config.toolProgress, DEFAULTS.toolProgress);
+    const expected = {
+      enabled: true, privateEnabled: true,
+      groupWhitelist: ['777777', '888888'], privateWhitelist: ['123456'],
+      maxMessagesPerTurn: 100, minIntervalMs: 0,
+    };
+    assert.equal((await put({ toolProgress: { ...expected, groupWhitelist: [' 777777 ', 888888] } })).status, 200);
+    const check = async () => {
+      assert.deepEqual((await get('/api/config')).body.config.toolProgress, expected);
+      assert.deepEqual(container.config.toolProgress, expected);
+      assert.deepEqual(JSON.parse(fs.readFileSync(container.config.paths.configFile, 'utf8')).toolProgress, expected);
+    };
+    await check();
+    assert.equal((await put({ logging: { level: 'warn' } })).status, 200);
+    await check();
+    assert.equal((await put({ toolProgress: { privateEnabled: false, groupWhitelist: [] } })).status, 200);
+    expected.privateEnabled = false;
+    expected.groupWhitelist = [];
+    await check();
+    assert.deepEqual(loadConfig({ rootDir: container.config.paths.rootDir, file: container.config.paths.configFile, env: {}, cliOverrides: { mode: 'test', identity: container.config.identity } }).toolProgress, expected);
+    assert.equal((await put({ toolProgress: { enabled: false, privateWhitelist: [], maxMessagesPerTurn: 1, minIntervalMs: 0.5 } })).status, 200);
+    Object.assign(expected, { enabled: false, privateWhitelist: [], maxMessagesPerTurn: 1, minIntervalMs: 0.5 });
+    await check();
+  });
+});
+
+test('工具进度接口拒绝非法类型、名单与数值，且不修改磁盘或运行态', async () => {
+  await withPanel({}, async ({ container, base }) => {
+    const file = container.config.paths.configFile;
+    const diskBefore = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
+    const before = structuredClone(container.config.toolProgress);
+    const invalid = [null, false, [], 'on',
+      ...['enabled', 'privateEnabled'].flatMap((key) => ['false', 0, null].map((value) => ({ [key]: value }))),
+      ...['groupWhitelist', 'privateWhitelist'].flatMap((key) => ['123', null, {}, [''], ['0'], ['abc'], ['123:5'], [true], [-1], [1.5], [Number.MAX_SAFE_INTEGER + 1]].map((value) => ({ [key]: value }))),
+      ...[0, 101, 1.5, '8', null].map((value) => ({ maxMessagesPerTurn: value })),
+      ...[-1, '0', null].map((value) => ({ minIntervalMs: value })),
+    ];
+    for (const toolProgress of invalid) {
+      const res = await fetch(`${base}/api/config`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ toolProgress, logging: { level: 'debug' } }),
+      });
+      assert.equal(res.status, 400, JSON.stringify(toolProgress));
+      assert.match((await res.json()).error, /toolProgress/);
+      assert.deepEqual(container.config.toolProgress, before);
+      assert.equal(fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null, diskBefore);
+    }
+  });
+});
+
+test('工具进度前端实际回显与保存：分隔符、空项、布尔值、零间隔和数字校验', async () => {
+  const html = fs.readFileSync(new URL('../../src/web/public/index.html', import.meta.url), 'utf8');
+  const app = fs.readFileSync(new URL('../../src/web/public/app.js', import.meta.url), 'utf8');
+  const nodes = new Map();
+  const $ = (selector) => {
+    if (!nodes.has(selector)) nodes.set(selector, {
+      _value: '', get value() { return this._value; }, set value(value) { this._value = String(value); },
+      checked: false, disabled: false, replaceChildren() {},
+    });
+    return nodes.get(selector);
+  };
+  const errors = [];
+  const submissions = [];
+  let config = {};
+  const context = vm.createContext({
+    $, esc: (s) => s, formatRateLimitEntry: String, formatGroupRateLimitEntry: String,
+    document: { querySelectorAll: () => [] },
+    toast: (message, error) => { if (error) errors.push(message); },
+    api: async (url, opts) => {
+      if (opts?.method === 'PUT') {
+        submissions.push(JSON.parse(JSON.stringify(opts.body)));
+        config = opts.body;
+        return { ok: true };
+      }
+      if (url === '/api/host/memes/settings') return { ok: false };
+      return { config, commands: [], configFile: 'test-config.json' };
+    },
+  });
+  vm.runInContext(app.slice(app.indexOf('let loadedConfigData = null;'), app.indexOf('async function testModelConnection(')), context);
+  await context.renderSettings();
+  assert.equal($('#cfg-tool-progress-enabled').checked, false);
+  assert.equal($('#cfg-tool-progress-private-enabled').checked, false);
+  assert.equal($('#cfg-tool-progress-max-messages').value, '8');
+  assert.equal($('#cfg-tool-progress-min-interval').value, '1500');
+  config = { toolProgress: { enabled: true, privateEnabled: false, groupWhitelist: [777777, '888888'], privateWhitelist: ['123456'], maxMessagesPerTurn: 12, minIntervalMs: 0 } };
+  await context.renderSettings();
+  assert.equal($('#cfg-tool-progress-group-whitelist').value, '777777, 888888');
+  assert.equal($('#cfg-tool-progress-private-whitelist').value, '123456');
+  assert.equal($('#cfg-tool-progress-enabled').checked, true);
+  assert.equal($('#cfg-tool-progress-private-enabled').checked, false);
+  assert.equal($('#cfg-tool-progress-max-messages').value, '12');
+  assert.equal($('#cfg-tool-progress-min-interval').value, '0');
+  for (const suffix of ['enabled', 'private-enabled', 'group-whitelist', 'private-whitelist', 'max-messages', 'min-interval']) {
+    assert.ok(html.includes(`id="cfg-tool-progress-${suffix}"`));
+  }
+  $('#cfg-tool-progress-enabled').checked = false;
+  $('#cfg-tool-progress-private-enabled').checked = true;
+  $('#cfg-tool-progress-group-whitelist').value = ' 777777, ，888888\n 999999 , ';
+  $('#cfg-tool-progress-private-whitelist').value = ' ， \t ';
+  $('#cfg-tool-progress-max-messages').value = '25';
+  $('#cfg-tool-progress-min-interval').value = '0';
+  await context.saveSettings();
+  assert.deepEqual(errors, []);
+  assert.deepEqual(submissions[0].toolProgress, {
+    enabled: false, privateEnabled: true, groupWhitelist: ['777777', '888888', '999999'],
+    privateWhitelist: [], maxMessagesPerTurn: 25, minIntervalMs: 0,
+  });
+  for (const [max, interval] of [['0', '0'], ['101', '0'], ['1.5', '0'], ['8', '-1'], ['8', 'Infinity'], ['8', 'abc']]) {
+    $('#cfg-tool-progress-max-messages').value = max;
+    $('#cfg-tool-progress-min-interval').value = interval;
+    await context.saveSettings();
+    assert.equal(submissions.length, 1, '非法数字不应提交');
+    assert.equal($('#cfg-save').disabled, false);
+  }
+  assert.equal(errors.length, 6);
 });
 
 test('静态首页与前端资源可访问', async () => {

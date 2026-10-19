@@ -83,6 +83,29 @@ npm start
 
 ---
 
+## 🛠️ 工具进度提示配置（默认关闭）
+
+顶层 `toolProgress` 控制工具调用的实时进度消息，默认关闭。支持 Hermes `hermes.tool.progress` 和标准 OpenAI 流式 `tool_calls`；非流式响应只能在响应返回时提示，无法提供执行中的实时进度。提示沿用本轮输出队列，不参与好感度/评分处理，也不会占用后台通知的回复引用锚点。
+默认值如下：
+
+```json
+"toolProgress": {
+  "enabled": false,
+  "groupWhitelist": [],
+  "privateEnabled": false,
+  "privateWhitelist": [],
+  "maxMessagesPerTurn": 8,
+  "minIntervalMs": 1500
+}
+```
+
+- **主动启用**：`enabled: true` 为总开关；群聊还必须在 `groupWhitelist` 中明确列出群号，空列表不允许任何群。
+- 私聊：总开关开启后，`privateEnabled: true` 允许所有私聊显示进度；否则仅允许 `privateWhitelist` 明确列出的 QQ 用户，空列表不允许任何私聊。
+- 这些名单**不改变原有回复资格**，不会绕过身份白名单、唤醒、频控等既有门禁，也不会让原本不应回复的消息触发回复。
+- 进度提示仅展示**工具名称**，不展示工具参数或工具输出。
+- 每轮最多 `maxMessagesPerTurn` 条提示（默认 8，须为 1–100 的整数）；同轮提示间冷却时间为 `minIntervalMs` 毫秒（默认 1500，须为非负有限数字，0 表示无冷却）。
+- `enabled`、`privateEnabled` 必须为 JSON 布尔值；两个名单必须为正整数 QQ ID 的字符串或数字数组（不接受布尔值）。建议用字符串填写 QQ ID。
+
 ## 🚦 频控（限速名单）
 
 名单内用户在滑动窗口内的回复条数达到上限后**静默忽略**（不回复、不排队、不触发模型），

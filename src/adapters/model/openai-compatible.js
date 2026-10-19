@@ -133,6 +133,7 @@ export class OpenAiCompatibleAdapter {
    * @param {object} modelRequest  createModelRequest() 的产物
    * @param {object} [opts]
    * @param {(chunk: string) => void} [opts.onText] 流式回调，每收到一段文本触发
+   * @param {(event: {id: string|null, name: string, status: string}) => void} [opts.onToolProgress] 工具开始通知（不含参数/结果）
    * @param {AbortSignal} [opts.signal]
    * @returns {Promise<object>} ModelResponse
    */
@@ -234,8 +235,8 @@ export class OpenAiCompatibleAdapter {
       }
 
       const parsed = stream
-        ? await this._readStream(res, opts.onText, opts.streamState)
-        : await this._readJson(res);
+        ? await this._readStream(res, opts.onText, opts.streamState, opts.onToolProgress)
+        : await this._readJson(res, opts.onToolProgress);
 
       return createModelResponse({
         correlationId: modelRequest.correlationId,
@@ -267,7 +268,7 @@ export class OpenAiCompatibleAdapter {
   }
 
   /** 解析 SSE 流。合并自 hermes_adapter.js:150-199 与 bridge.js:945-966。 */
-  async _readStream(res, onText, streamState) {
+  async _readStream(res, onText, streamState, onToolProgress) {
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
@@ -275,15 +276,22 @@ export class OpenAiCompatibleAdapter {
     let responseId = null;
     const usage = { inputTokens: 0, outputTokens: 0 };
     const toolCalls = [];
+    const callsByIndex = new Map();
+    const notified = new Set();
+    let eventType = '';
+    let dataLines = [];
+    const notify = (id, name) => {
+      if (typeof name !== 'string' || !name || name.startsWith('_')) return;
+      const key = id || name;
+      if (notified.has(key)) return;
+      notified.add(key);
+      if (onToolProgress) {
+        if (streamState) streamState.emitted = true;
+        this._notifyToolProgress(onToolProgress, { id: id || null, name, status: 'running' });
+      }
+    };
 
-    const handleLine = (line) => {
-      const cleaned = line.trim();
-      if (!cleaned) return;
-      // 跳过 event 行（Hermes 会推 hermes.tool.progress 等）
-      if (cleaned.startsWith('event:')) return;
-      if (!cleaned.startsWith('data:')) return;
-
-      const jsonStr = cleaned.slice(5).trim();
+    const handleData = (jsonStr, type) => {
       if (!jsonStr || jsonStr === '[DONE]') return;
 
       let json;
@@ -293,6 +301,12 @@ export class OpenAiCompatibleAdapter {
         return; // 半截 JSON，忽略
       }
 
+      if (type === 'hermes.tool.progress') {
+        if (json.status === 'running') notify(json.toolCallId, json.tool);
+        return;
+      }
+      // 其他具名事件（思考、审批等）不属于回复文本或工具开始通知。
+      if (type && type !== 'message') return;
       if (json.id && !responseId) responseId = json.id;
       if (json.usage) {
         usage.inputTokens = json.usage.prompt_tokens ?? usage.inputTokens;
@@ -306,7 +320,36 @@ export class OpenAiCompatibleAdapter {
         if (streamState) streamState.emitted = true;
         if (onText) onText(delta.content);
       }
-      if (Array.isArray(delta?.tool_calls)) toolCalls.push(...delta.tool_calls);
+      if (Array.isArray(delta?.tool_calls)) {
+        for (const part of delta.tool_calls) {
+          const index = part.index ?? 0;
+          let call = callsByIndex.get(index);
+          if (!call) {
+            call = { id: '', type: 'function', function: { name: '', arguments: '' } };
+            callsByIndex.set(index, call);
+            toolCalls.push(call);
+          }
+          if (part.id) call.id = part.id;
+          if (part.function?.name) call.function.name += part.function.name;
+          if (part.function?.arguments) call.function.arguments += part.function.arguments;
+          // 参数开始后，函数名才稳定；不能把分片的函数名播报成多个工具。
+          if (call.function.arguments) notify(call.id || `index:${index}`, call.function.name);
+        }
+      }
+      if (json.choices?.[0]?.finish_reason) {
+        for (const [index, call] of callsByIndex) notify(call.id || `index:${index}`, call.function.name);
+      }
+    };
+    const flushEvent = () => {
+      if (dataLines.length) handleData(dataLines.join('\n'), eventType);
+      eventType = '';
+      dataLines = [];
+    };
+    const handleLine = (line) => {
+      const cleaned = line.replace(/\r$/, '');
+      if (!cleaned) { flushEvent(); return; }
+      if (cleaned.startsWith('event:')) eventType = cleaned.slice(6).trim();
+      if (cleaned.startsWith('data:')) dataLines.push(cleaned.slice(5).replace(/^ /, ''));
     };
 
     for (;;) {
@@ -317,14 +360,34 @@ export class OpenAiCompatibleAdapter {
       buffer = lines.pop() ?? '';
       for (const line of lines) handleLine(line);
     }
+    buffer += decoder.decode();
     if (buffer.trim()) handleLine(buffer);
+    flushEvent();
+    for (const [index, call] of callsByIndex) notify(call.id || `index:${index}`, call.function.name);
 
     return { text, responseId, usage, toolCalls };
   }
 
-  async _readJson(res) {
+  _notifyToolProgress(callback, event) {
+    // 进度回调失败不能导致模型重试，更不能重复执行工具。
+    try {
+      const pending = callback(event);
+      if (pending?.catch) pending.catch(() => {});
+    } catch {
+      this.log.warn('工具进度回调失败（已忽略）');
+    }
+  }
+
+  async _readJson(res, onToolProgress) {
     const json = await res.json();
     const choice = json.choices?.[0];
+    if (onToolProgress) {
+      for (const call of choice?.message?.tool_calls ?? []) {
+        if (call.function?.name && !call.function.name.startsWith('_')) {
+          this._notifyToolProgress(onToolProgress, { id: call.id || null, name: call.function.name, status: 'running' });
+        }
+      }
+    }
     return {
       text: choice?.message?.content ?? '',
       responseId: json.id ?? null,

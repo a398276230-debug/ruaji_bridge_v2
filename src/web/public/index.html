@@ -321,6 +321,47 @@
           </div>
         </div>
 
+        <!-- 工具进度：独立于身份白名单，不改变消息入口权限 -->
+        <div class="cfg-card">
+          <div class="cfg-card-header">
+            <span class="cfg-icon">⏳</span>
+            <h3>工具进度播报 (toolProgress)</h3>
+          </div>
+          <div class="cfg-card-body">
+            <div class="field-row-checks">
+              <label class="check">
+                <input type="checkbox" id="cfg-tool-progress-enabled"> 启用工具进度播报（总开关）
+              </label>
+              <label class="check">
+                <input type="checkbox" id="cfg-tool-progress-private-enabled"> 向所有获准私聊的用户播报
+              </label>
+            </div>
+            <span class="field-desc">总开关关闭时群聊、私聊均不播报；开启后，群聊仅向下方群白名单播报。私聊全量开关关闭时，仅向私聊播报白名单播报。只显示工具名，不公开参数或结果；保存后立即生效，不改变上方消息入口白名单。</span>
+            <div class="field-row single">
+              <label>播报群白名单 (groupWhitelist)
+                <input type="text" id="cfg-tool-progress-group-whitelist" placeholder="用逗号或空格分隔多个群号，如: 10000002, 10000004">
+                <span class="field-desc">留空即不向任何群聊播报；仅支持群号，不支持频控写法</span>
+              </label>
+            </div>
+            <div class="field-row single">
+              <label>私聊播报白名单 (privateWhitelist)
+                <input type="text" id="cfg-tool-progress-private-whitelist" placeholder="用逗号或空格分隔多个 QQ 号，如: 10000001, 10000003">
+                <span class="field-desc">私聊全量开关关闭且名单为空时，不向任何私聊播报</span>
+              </label>
+            </div>
+            <div class="field-row">
+              <label>单轮播报上限 (maxMessagesPerTurn)
+                <input type="number" id="cfg-tool-progress-max-messages" min="1" max="100" step="1" placeholder="8">
+                <span class="field-desc">每轮最多播报 1-100 条，默认 8 条</span>
+              </label>
+              <label>最小播报间隔 (minIntervalMs，毫秒)
+                <input type="number" id="cfg-tool-progress-min-interval" min="0" step="any" placeholder="1500">
+                <span class="field-desc">非负毫秒数，默认 1500；填 0 表示不限制间隔</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
         <!-- 卡片 2: 表情包与视觉识别模型 -->
         <div class="cfg-card">
           <div class="cfg-card-header">

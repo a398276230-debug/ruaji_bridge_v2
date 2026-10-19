@@ -8,6 +8,7 @@
  */
 
 import fs from 'node:fs';
+import { DEFAULTS } from '../../core/config.js';
 import path from 'node:path';
 import { commandCatalog, normalizeAdminCommands } from '../../core/command-registry.js';
 import { normalizeRateLimitList, toConfigRateLimitEntry, normalizeGroupRateLimitList, toConfigGroupRateLimitEntry } from '../../core/rate-limit-policy.js';
@@ -143,6 +144,12 @@ export function createConfigApi(deps) {
           maxSendAgeMs: config.reply?.maxSendAgeMs ?? 600000,
           maxSendRetries: config.reply?.maxSendRetries ?? 10,
         },
+        toolProgress: {
+          ...DEFAULTS.toolProgress,
+          ...config.toolProgress,
+          groupWhitelist: [...(config.toolProgress?.groupWhitelist ?? [])],
+          privateWhitelist: [...(config.toolProgress?.privateWhitelist ?? [])],
+        },
         fastAck: {
           enabled: Boolean(config.fastAck?.enabled),
           message: config.fastAck?.message ?? '收到，已派给编程/画师，弄好叫你~',
@@ -268,6 +275,32 @@ export function createConfigApi(deps) {
       const errors = [];
 
       // 1. 基础校验
+      const tp = updates.toolProgress;
+      if (tp !== undefined) {
+        if (!tp || typeof tp !== 'object' || Array.isArray(tp)) {
+          errors.push('toolProgress 必须为配置对象');
+        } else {
+          for (const key of ['enabled', 'privateEnabled']) {
+            if (Object.hasOwn(tp, key) && typeof tp[key] !== 'boolean') {
+              errors.push(`toolProgress.${key} 必须为布尔值`);
+            }
+          }
+          for (const key of ['groupWhitelist', 'privateWhitelist']) {
+            if (Object.hasOwn(tp, key) && (!Array.isArray(tp[key]) || !tp[key].every((id) => (
+              typeof id === 'string' ? /^\d+$/.test(id.trim()) && /[1-9]/.test(id.trim())
+                : typeof id === 'number' && Number.isSafeInteger(id) && id > 0
+            )))) {
+              errors.push(`toolProgress.${key} 必须为正整数 QQ ID 字符串或数字数组`);
+            }
+          }
+          if (Object.hasOwn(tp, 'maxMessagesPerTurn') && (!Number.isInteger(tp.maxMessagesPerTurn) || tp.maxMessagesPerTurn < 1 || tp.maxMessagesPerTurn > 100)) {
+            errors.push('toolProgress.maxMessagesPerTurn 必须为 1-100 的整数');
+          }
+          if (Object.hasOwn(tp, 'minIntervalMs') && (typeof tp.minIntervalMs !== 'number' || !Number.isFinite(tp.minIntervalMs) || tp.minIntervalMs < 0)) {
+            errors.push('toolProgress.minIntervalMs 必须为非负有限毫秒数');
+          }
+        }
+      }
       if (updates.identity) {
         if (updates.identity.adminIds !== undefined && (!Array.isArray(updates.identity.adminIds) ||
           updates.identity.adminIds.some((id) => !/^\d+$/.test(String(id).trim())))) {
@@ -555,6 +588,16 @@ export function createConfigApi(deps) {
         };
       }
 
+      if (tp !== undefined) {
+        const next = { ...DEFAULTS.toolProgress, ...config.toolProgress, ...diskConfig.toolProgress };
+        for (const key of Object.keys(DEFAULTS.toolProgress)) {
+          if (Object.hasOwn(tp, key)) {
+            next[key] = Array.isArray(tp[key]) ? tp[key].map((id) => String(id).trim()) : tp[key];
+          }
+        }
+        diskConfig.toolProgress = next;
+      }
+
       if (updates.fastAck) {
         diskConfig.fastAck = {
           ...(diskConfig.fastAck || {}),
@@ -649,6 +692,9 @@ export function createConfigApi(deps) {
       if (diskConfig.context) Object.assign(config.context, diskConfig.context);
       if (diskConfig.reply) Object.assign(config.reply, diskConfig.reply);
       if (diskConfig.fastAck) Object.assign(config.fastAck, diskConfig.fastAck);
+      if (tp !== undefined) {
+        config.toolProgress = { ...config.toolProgress, ...diskConfig.toolProgress };
+      }
       if (diskConfig.logging) Object.assign(config.logging, diskConfig.logging);
       if (diskConfig.portrayal) {
         config.portrayal = { ...(config.portrayal || {}), ...diskConfig.portrayal };
