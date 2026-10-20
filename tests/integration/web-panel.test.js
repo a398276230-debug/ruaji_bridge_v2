@@ -129,7 +129,7 @@ test('工具进度配置：默认回显、落盘、热更新、部分更新与�
     });
     assert.deepEqual((await get('/api/config')).body.config.toolProgress, DEFAULTS.toolProgress);
     const expected = {
-      enabled: true, privateEnabled: true,
+      enabled: true, privateEnabled: true, showDetail: true,
       groupWhitelist: ['777777', '888888'], privateWhitelist: ['123456'],
       maxMessagesPerTurn: 100, minIntervalMs: 0,
     };
@@ -143,6 +143,8 @@ test('工具进度配置：默认回显、落盘、热更新、部分更新与�
     assert.equal((await put({ logging: { level: 'warn' } })).status, 200);
     await check();
     assert.equal((await put({ toolProgress: { privateEnabled: false, groupWhitelist: [] } })).status, 200);
+    assert.equal((await put({ toolProgress: { showDetail: false } })).status, 200);
+    expected.showDetail = false;
     expected.privateEnabled = false;
     expected.groupWhitelist = [];
     await check();
@@ -159,7 +161,7 @@ test('工具进度接口拒绝非法类型、名单与数值，且不修改磁�
     const diskBefore = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
     const before = structuredClone(container.config.toolProgress);
     const invalid = [null, false, [], 'on',
-      ...['enabled', 'privateEnabled'].flatMap((key) => ['false', 0, null].map((value) => ({ [key]: value }))),
+      ...['enabled', 'privateEnabled', 'showDetail'].flatMap((key) => ['false', 0, null].map((value) => ({ [key]: value }))),
       ...['groupWhitelist', 'privateWhitelist'].flatMap((key) => ['123', null, {}, [''], ['0'], ['abc'], ['123:5'], [true], [-1], [1.5], [Number.MAX_SAFE_INTEGER + 1]].map((value) => ({ [key]: value }))),
       ...[0, 101, 1.5, '8', null].map((value) => ({ maxMessagesPerTurn: value })),
       ...[-1, '0', null].map((value) => ({ minIntervalMs: value })),
@@ -208,6 +210,7 @@ test('工具进度前端实际回显与保存：分隔符、空项、布尔值�
   vm.runInContext(app.slice(app.indexOf('let loadedConfigData = null;'), app.indexOf('async function testModelConnection(')), context);
   await context.renderSettings();
   assert.equal($('#cfg-tool-progress-enabled').checked, false);
+  assert.equal($('#cfg-tool-progress-show-detail').checked, true);
   assert.equal($('#cfg-tool-progress-private-enabled').checked, false);
   assert.equal($('#cfg-tool-progress-max-messages').value, '8');
   assert.equal($('#cfg-tool-progress-min-interval').value, '1500');
@@ -219,10 +222,11 @@ test('工具进度前端实际回显与保存：分隔符、空项、布尔值�
   assert.equal($('#cfg-tool-progress-private-enabled').checked, false);
   assert.equal($('#cfg-tool-progress-max-messages').value, '12');
   assert.equal($('#cfg-tool-progress-min-interval').value, '0');
-  for (const suffix of ['enabled', 'private-enabled', 'group-whitelist', 'private-whitelist', 'max-messages', 'min-interval']) {
+  for (const suffix of ['enabled', 'show-detail', 'private-enabled', 'group-whitelist', 'private-whitelist', 'max-messages', 'min-interval']) {
     assert.ok(html.includes(`id="cfg-tool-progress-${suffix}"`));
   }
   $('#cfg-tool-progress-enabled').checked = false;
+  $('#cfg-tool-progress-show-detail').checked = false;
   $('#cfg-tool-progress-private-enabled').checked = true;
   $('#cfg-tool-progress-group-whitelist').value = ' 777777, ，888888\n 999999 , ';
   $('#cfg-tool-progress-private-whitelist').value = ' ， \t ';
@@ -231,7 +235,7 @@ test('工具进度前端实际回显与保存：分隔符、空项、布尔值�
   await context.saveSettings();
   assert.deepEqual(errors, []);
   assert.deepEqual(submissions[0].toolProgress, {
-    enabled: false, privateEnabled: true, groupWhitelist: ['777777', '888888', '999999'],
+    enabled: false, privateEnabled: true, showDetail: false, groupWhitelist: ['777777', '888888', '999999'],
     privateWhitelist: [], maxMessagesPerTurn: 25, minIntervalMs: 0,
   });
   for (const [max, interval] of [['0', '0'], ['101', '0'], ['1.5', '0'], ['8', '-1'], ['8', 'Infinity'], ['8', 'abc']]) {

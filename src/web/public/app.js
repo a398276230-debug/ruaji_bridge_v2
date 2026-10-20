@@ -1066,6 +1066,7 @@ async function renderSettings() {
 
   // 工具进度播报（总开关同时约束群聊与私聊）
   $('#cfg-tool-progress-enabled').checked = d.config.toolProgress?.enabled === true;
+  $('#cfg-tool-progress-show-detail').checked = d.config.toolProgress?.showDetail !== false;
   $('#cfg-tool-progress-private-enabled').checked = d.config.toolProgress?.privateEnabled === true;
   $('#cfg-tool-progress-group-whitelist').value = (d.config.toolProgress?.groupWhitelist || []).join(', ');
   $('#cfg-tool-progress-private-whitelist').value = (d.config.toolProgress?.privateWhitelist || []).join(', ');
@@ -1237,6 +1238,7 @@ async function saveSettings() {
     const payload = {
       toolProgress: {
         enabled: $('#cfg-tool-progress-enabled').checked,
+        showDetail: $('#cfg-tool-progress-show-detail').checked,
         privateEnabled: $('#cfg-tool-progress-private-enabled').checked,
         groupWhitelist: parseToolProgressWhitelist('#cfg-tool-progress-group-whitelist'),
         privateWhitelist: parseToolProgressWhitelist('#cfg-tool-progress-private-whitelist'),

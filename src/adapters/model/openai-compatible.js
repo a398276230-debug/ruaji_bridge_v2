@@ -133,7 +133,7 @@ export class OpenAiCompatibleAdapter {
    * @param {object} modelRequest  createModelRequest() 的产物
    * @param {object} [opts]
    * @param {(chunk: string) => void} [opts.onText] 流式回调，每收到一段文本触发
-   * @param {(event: {id: string|null, name: string, status: string}) => void} [opts.onToolProgress] 工具开始通知（不含参数/结果）
+   * @param {(event: {id: string|null, name: string, status: string, args?: object, label?: string}) => void} [opts.onToolProgress] 工具开始通知（仅调用侧参数/摘要，不含结果）
    * @param {AbortSignal} [opts.signal]
    * @returns {Promise<object>} ModelResponse
    */
@@ -280,14 +280,14 @@ export class OpenAiCompatibleAdapter {
     const notified = new Set();
     let eventType = '';
     let dataLines = [];
-    const notify = (id, name) => {
+    const notify = (id, name, detail = {}) => {
       if (typeof name !== 'string' || !name || name.startsWith('_')) return;
       const key = id || name;
       if (notified.has(key)) return;
       notified.add(key);
       if (onToolProgress) {
         if (streamState) streamState.emitted = true;
-        this._notifyToolProgress(onToolProgress, { id: id || null, name, status: 'running' });
+        this._notifyToolProgress(onToolProgress, { id: id || null, name, status: 'running', ...detail });
       }
     };
 
@@ -302,7 +302,8 @@ export class OpenAiCompatibleAdapter {
       }
 
       if (type === 'hermes.tool.progress') {
-        if (json.status === 'running') notify(json.toolCallId, json.tool);
+        if (json.status === 'running') notify(json.toolCallId, json.tool,
+          typeof json.label === 'string' ? { label: json.label } : {});
         return;
       }
       // 其他具名事件（思考、审批等）不属于回复文本或工具开始通知。
@@ -332,12 +333,16 @@ export class OpenAiCompatibleAdapter {
           if (part.id) call.id = part.id;
           if (part.function?.name) call.function.name += part.function.name;
           if (part.function?.arguments) call.function.arguments += part.function.arguments;
-          // 参数开始后，函数名才稳定；不能把分片的函数名播报成多个工具。
-          if (call.function.arguments) notify(call.id || `index:${index}`, call.function.name);
+          // 等完整调用参数，避免半截 JSON 抢占去重键而丢失摘要。
+          const args = this._toolProgressArgs(call.function.arguments);
+          if (args) notify(call.id || `index:${index}`, call.function.name, { args });
         }
       }
       if (json.choices?.[0]?.finish_reason) {
-        for (const [index, call] of callsByIndex) notify(call.id || `index:${index}`, call.function.name);
+        for (const [index, call] of callsByIndex) {
+          const args = this._toolProgressArgs(call.function.arguments);
+          notify(call.id || `index:${index}`, call.function.name, args ? { args } : {});
+        }
       }
     };
     const flushEvent = () => {
@@ -363,9 +368,19 @@ export class OpenAiCompatibleAdapter {
     buffer += decoder.decode();
     if (buffer.trim()) handleLine(buffer);
     flushEvent();
-    for (const [index, call] of callsByIndex) notify(call.id || `index:${index}`, call.function.name);
+    for (const [index, call] of callsByIndex) {
+      const args = this._toolProgressArgs(call.function.arguments);
+      notify(call.id || `index:${index}`, call.function.name, args ? { args } : {});
+    }
 
     return { text, responseId, usage, toolCalls };
+  }
+
+  _toolProgressArgs(value) {
+    try {
+      const args = JSON.parse(value);
+      return args && typeof args === 'object' && !Array.isArray(args) ? args : null;
+    } catch { return null; }
   }
 
   _notifyToolProgress(callback, event) {
@@ -384,7 +399,8 @@ export class OpenAiCompatibleAdapter {
     if (onToolProgress) {
       for (const call of choice?.message?.tool_calls ?? []) {
         if (call.function?.name && !call.function.name.startsWith('_')) {
-          this._notifyToolProgress(onToolProgress, { id: call.id || null, name: call.function.name, status: 'running' });
+          const args = this._toolProgressArgs(call.function.arguments);
+          this._notifyToolProgress(onToolProgress, { id: call.id || null, name: call.function.name, status: 'running', ...(args ? { args } : {}) });
         }
       }
     }

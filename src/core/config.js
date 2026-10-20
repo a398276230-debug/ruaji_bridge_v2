@@ -16,6 +16,7 @@ const DEFAULTS = {
   mode: 'live',
   toolProgress: {
     enabled: false,
+    showDetail: true,
     groupWhitelist: [],
     privateEnabled: false,
     privateWhitelist: [],
@@ -444,7 +445,7 @@ function validate(config) {
   if (!isPlainObject(tp)) {
     errors.push('toolProgress 非法（应为配置对象）');
   } else {
-    for (const key of ['enabled', 'privateEnabled']) {
+    for (const key of ['enabled', 'privateEnabled', 'showDetail']) {
       if (typeof tp[key] !== 'boolean') {
         errors.push(`toolProgress.${key} 非法（应为布尔值）`);
       }

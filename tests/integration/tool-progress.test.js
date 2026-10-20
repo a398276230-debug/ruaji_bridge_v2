@@ -33,7 +33,7 @@ for (const type of ['group', 'private']) {
       await visible;
       assert.equal(sent.length, 1);
       assert.equal(released, false);
-      assert.equal(sent[0].text, '⏳ 正在调用 terminal…');
+      assert.equal(sent[0].text, '⏳ 正在执行命令：***（terminal）');
       assert.deepEqual(sent[0].target, { type, id: type === 'group' ? '777' : '123' });
       assert.equal(sent[0].metadata.origin, 'tool-progress');
       assert.equal(sent[0].metadata.isFirst, false);

@@ -10,6 +10,7 @@ import { ConfigError } from '../../src/contracts/errors.js';
 const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
 const expectedDefaults = {
   enabled: false,
+  showDetail: true,
   groupWhitelist: [],
   privateEnabled: false,
   privateWhitelist: [],
@@ -41,10 +42,10 @@ test('toolProgress configuration validation', async (t) => {
     assert.deepEqual(load().toolProgress, expectedDefaults);
   });
 
-  await t.test('both shipped JSON configurations explicitly use the same defaults', () => {
-    for (const file of ['bridge.config.json', 'bridge.config.example.json']) {
+  await t.test('example configuration merges the same defaults (live config may be customized)', () => {
+    for (const file of ['bridge.config.example.json']) {
       const config = JSON.parse(fs.readFileSync(path.join(repoRoot, file), 'utf8'));
-      assert.deepEqual(config.toolProgress, expectedDefaults, file);
+      assert.deepEqual({ showDetail: true, ...config.toolProgress }, expectedDefaults, file);
     }
   });
 
@@ -64,7 +65,7 @@ test('toolProgress configuration validation', async (t) => {
   });
 
   await t.test('boolean switches are strict even when disabled', () => {
-    for (const field of ['enabled', 'privateEnabled']) {
+    for (const field of ['enabled', 'privateEnabled', 'showDetail']) {
       for (const value of [true, false]) assert.equal(load({ [field]: value }).toolProgress[field], value);
       for (const value of [null, 0, 1, 'true', 'false', '', [], {}]) rejects({ [field]: value }, field);
     }

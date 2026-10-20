@@ -280,7 +280,7 @@ export function createConfigApi(deps) {
         if (!tp || typeof tp !== 'object' || Array.isArray(tp)) {
           errors.push('toolProgress 必须为配置对象');
         } else {
-          for (const key of ['enabled', 'privateEnabled']) {
+          for (const key of ['enabled', 'privateEnabled', 'showDetail']) {
             if (Object.hasOwn(tp, key) && typeof tp[key] !== 'boolean') {
               errors.push(`toolProgress.${key} 必须为布尔值`);
             }
