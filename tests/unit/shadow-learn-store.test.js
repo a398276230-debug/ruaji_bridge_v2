@@ -115,7 +115,7 @@ test('representativeExamples：去重后按长度等距采样，覆盖最短到�
   assert.deepEqual(representativeExamples(['重复', '重复', '唯一二']), ['重复', '唯一二']);
 });
 
-test('renderFewShotBlock：上游同款档案格式，例句转义尖括号', () => {
+test('renderFewShotBlock：纯统计画像格式，不再包含 example 样例', () => {
   const store = new ShadowLearnStore({ persistEnabled: false, logger: createTestLogger() });
   store.recordMessage('111', 'Alice', '666', '今天好热啊');
   store.recordMessage('111', 'Alice', '666', '这游戏也太好玩了吧');
@@ -128,35 +128,31 @@ test('renderFewShotBlock：上游同款档案格式，例句转义尖括号', ()
   assert.ok(block.includes('平均消息长度约'));
   assert.ok(block.includes('常用语气结尾'));
   assert.ok(block.includes('常用标点'));
-  assert.ok(block.includes('<example>今天好热啊</example>'));
-
-  // 尖括号转义（上游 _quote_example 同款），防止例句伪造标签
-  store.recordMessage('111', 'Alice', '666', '看<b>这个</b>');
-  const escaped = store.renderFewShotBlock({ groupId: '666', targets: ['111'] });
-  assert.ok(escaped.includes('＜b＞这个＜/b＞'));
-  assert.ok(!escaped.includes('<b>'));
+  // 确认不再注入 example 样例与代表性表达
+  assert.ok(!block.includes('<example>'));
+  assert.ok(!block.includes('代表性表达'));
 });
 
 test('renderFewShotBlock：同群语料优先分析，同群不足时退回全部', () => {
   const store = new ShadowLearnStore({ persistEnabled: false, logger: createTestLogger() });
-  store.recordMessage('111', 'Alice', '666', '同群话一');
-  store.recordMessage('111', 'Alice', '666', '同群话二');
-  store.recordMessage('111', 'Alice', '666', '同群话三');
-  store.recordMessage('111', 'Alice', '777', '他群话一');
-  store.recordMessage('111', 'Alice', '777', '他群话二');
+  store.recordMessage('111', 'Alice', '666', '同群第一条！');
+  store.recordMessage('111', 'Alice', '666', '同群第二条！');
+  store.recordMessage('111', 'Alice', '666', '同群第三条！');
+  store.recordMessage('111', 'Alice', '777', '他群非常长非常长非常长的一条消息？？？');
+  store.recordMessage('111', 'Alice', '777', '他群另一条长句子？？？');
 
   const block = store.renderFewShotBlock({ groupId: '666', targets: ['111'] });
-  assert.ok(block.includes('同群话一'));
-  assert.ok(!block.includes('他群话一')); // 同群样本够 3 条，只用同群的
-  assert.ok(block.includes('无明显偏好')); // 该语料无语气结尾/标点
+  // 同群样本够 3 条，只用同群的（标点只有 ！，无 ？）
+  assert.ok(block.includes('常用标点：！'));
+  assert.ok(!block.includes('？'));
 
   // 同群有效样本不足 MIN_SHADOW_SAMPLES → 退回该群友全部语料
   const sparse = new ShadowLearnStore({ persistEnabled: false, logger: createTestLogger() });
-  sparse.recordMessage('111', 'Alice', '666', '同群独苗');
-  sparse.recordMessage('111', 'Alice', '777', '他群话一');
-  sparse.recordMessage('111', 'Alice', '777', '他群话二');
+  sparse.recordMessage('111', 'Alice', '666', '同群独苗！');
+  sparse.recordMessage('111', 'Alice', '777', '他群话一？');
+  sparse.recordMessage('111', 'Alice', '777', '他群话二？');
   const fallback = sparse.renderFewShotBlock({ groupId: '666', targets: ['111'] });
-  assert.ok(fallback.includes('他群话一'));
+  assert.ok(fallback.includes('？'));
 });
 
 test('renderFewShotBlock：样本不足返回空串，多目标各成一段', () => {
@@ -176,16 +172,15 @@ test('renderFewShotBlock：样本不足返回空串，多目标各成一段', ()
   assert.equal(block.split('影子模式：语言行为档案').length - 1, 1);
 });
 
-test('renderFewShotBlock：例句条数受 count 控制，上限 10', () => {
+test('renderFewShotBlock：始终保持纯客观分析，无 example 输出', () => {
   const store = new ShadowLearnStore({ persistEnabled: false, logger: createTestLogger() });
   for (let i = 0; i < 15; i += 1) {
     store.recordMessage('111', 'Alice', '666', `第${i}条话术样本`);
   }
-  const exampleLines = (block) => block.split('\n').filter((l) => l.startsWith('  <example>')).length;
-
-  assert.equal(exampleLines(store.renderFewShotBlock({ groupId: '666', targets: ['111'], count: 3 })), 3);
-  assert.equal(exampleLines(store.renderFewShotBlock({ groupId: '666', targets: ['111'], count: 99 })), MAX_PROFILE_EXAMPLES);
-  assert.equal(exampleLines(store.renderFewShotBlock({ groupId: '666', targets: ['111'] })), MAX_PROFILE_EXAMPLES);
+  const block = store.renderFewShotBlock({ groupId: '666', targets: ['111'], count: 3 });
+  assert.ok(!block.includes('<example>'));
+  assert.ok(!block.includes('代表性表达'));
+  assert.ok(block.includes('平均消息长度约'));
 });
 
 test('flush 落盘后新实例能读回语料', () => {
@@ -193,15 +188,17 @@ test('flush 落盘后新实例能读回语料', () => {
   try {
     const file = path.join(dir, 'learning.json');
     const store = new ShadowLearnStore({ file, persistEnabled: true, logger: createTestLogger() });
-    store.recordMessage('111', 'Alice', '666', '落盘这条');
-    store.recordMessage('111', 'Alice', '666', '再多一条');
-    store.recordMessage('111', 'Alice', '666', '凑满三条');
+    store.recordMessage('111', 'Alice', '666', '落盘这条！');
+    store.recordMessage('111', 'Alice', '666', '再多一条！');
+    store.recordMessage('111', 'Alice', '666', '凑满三条！');
     store.flush();
     assert.ok(fs.existsSync(file));
 
     const reloaded = new ShadowLearnStore({ file, persistEnabled: false, logger: createTestLogger() });
     assert.equal(reloaded.countFor('111'), 3);
-    assert.ok(reloaded.renderFewShotBlock({ groupId: '666', targets: ['111'] }).includes('落盘这条'));
+    const block = reloaded.renderFewShotBlock({ groupId: '666', targets: ['111'] });
+    assert.ok(block.includes('Alice（QQ：111）'));
+    assert.ok(block.includes('常用标点：！'));
   } finally {
     cleanupDir(dir);
   }
