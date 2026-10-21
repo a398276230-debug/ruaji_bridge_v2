@@ -5,19 +5,22 @@ import vm from 'node:vm';
 
 const html = fs.readFileSync(new URL('../../src/web/public/index.html', import.meta.url), 'utf8');
 const app = fs.readFileSync(new URL('../../src/web/public/app.js', import.meta.url), 'utf8');
+const css = fs.readFileSync(new URL('../../src/web/public/style.css', import.meta.url), 'utf8');
 const plain = (value) => JSON.parse(JSON.stringify(value));
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
-// Tiny DOM fixture, not a browser emulator. Parses real HTML/generated controls so
-// missing IDs and event bindings fail rather than being conjured by querySelector.
+// Tiny DOM fixture, not a browser emulator. Parses the real HTML and the real
+// generated rows so missing IDs / event bindings fail instead of being conjured
+// by querySelector. Selector support is intentionally minimal: tag, #id, .class
+// and bare [attribute] — tests use dataset.find() for attribute values.
 class Element {
   constructor(tag, attrs = {}, owner) {
     this.tagName = tag; this.owner = owner; this.attrs = attrs; this.id = attrs.id || '';
     this.children = []; this.dataset = {}; this.style = {}; this.textContent = '';
     this.hidden = 'hidden' in attrs; this.checked = 'checked' in attrs;
-    this.disabled = 'disabled' in attrs; this.indeterminate = false;
+    this.disabled = 'disabled' in attrs; this.indeterminate = false; this.open = 'open' in attrs;
     this._value = attrs.value || ''; this.files = [];
-    this.classes = new Set((attrs.class || '').split(/\s+/));
+    this.classes = new Set((attrs.class || '').split(/\s+/).filter(Boolean));
     this.classList = {
       toggle: (name, on) => { if (on ?? !this.classes.has(name)) this.classes.add(name); else this.classes.delete(name); },
       add: (name) => this.classes.add(name), remove: (name) => this.classes.delete(name),
@@ -47,29 +50,34 @@ class Element {
   }
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
 }
+const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr', 'path', 'circle', 'rect', 'use', 'stop', 'line', 'polyline', 'polygon']);
 function parse(source, owner) {
-  const result = [];
-  for (const match of source.matchAll(/<([a-z][\w-]*)\b([^>]*)>/gi)) {
+  // Real nesting, so a <button> inside a <tr> is reached exactly once through
+  // querySelectorAll. Void elements never open a scope; select keeps its options.
+  const root = new Element('root', {}, owner);
+  const stack = [root];
+  for (const match of source.matchAll(/<(\/?)([a-z][\w-]*)\b([^>]*?)(\/?)>/gi)) {
+    const [, closing, tag, rawAttrs, selfClosing] = match;
+    if (closing) {
+      for (let i = stack.length - 1; i > 0; i -= 1) {
+        if (stack[i].tagName === tag) { stack.length = i; break; }
+      }
+      continue;
+    }
     const attrs = {};
-    for (const attr of match[2].matchAll(/([\w-]+)(?:="([^"]*)")?/g)) attrs[attr[1]] = attr[2] ?? '';
-    const element = new Element(match[1], attrs, owner);
-    // Enough select parsing for native enum/tri-state values.
-    if (match[1] === 'table') {
-      const rest = source.slice(match.index + match[0].length).split('</table>')[0];
-      element.children = parse(rest, owner);
-    }
-    if (['thead', 'tbody', 'tr'].includes(match[1])) {
-      const rest = source.slice(match.index + match[0].length).split(`</${match[1]}>`)[0];
-      element.children = parse(rest, owner);
-    }
-    if (match[1] === 'select') {
-      const rest = source.slice(match.index + match[0].length).split('</select>')[0];
-      element.children = parse(rest, owner).filter((el) => el.tagName === 'option');
-      element.value = element.options[0]?.value ?? '';
-    }
-    result.push(element);
+    for (const attr of rawAttrs.matchAll(/([\w-]+)(?:="([^"]*)")?/g)) attrs[attr[1]] = attr[2] ?? '';
+    const element = new Element(tag, attrs, owner);
+    const parent = stack[stack.length - 1];
+    parent.children.push(element);
+    element.parent = parent;
+    if (!VOID_TAGS.has(tag) && !selfClosing) stack.push(element);
   }
-  return result;
+  const finish = (el) => {
+    if (el.tagName === 'select') el.value = el.options[0]?.value ?? '';
+    el.children.forEach(finish);
+  };
+  root.children.forEach(finish);
+  return root.children;
 }
 
 function panel(fullStartup = false) {
@@ -164,7 +172,9 @@ function panel(fullStartup = false) {
     await tick();
   };
   const enter = async () => { const tab = document.querySelectorAll('.tab').find((el) => el.dataset.view === 'lorebooks'); await tab.click(); await tick(); };
-  return { $, document, context, event, enter, books, requests, errors, prompts, confirmations, urls, revoked, intervals, fail: (response) => { fail = response; } };
+  const row = (attr, uid) => document.querySelectorAll(`[${attr}]`).find((el) => el.dataset[attr.replace(/^data-/, '').replace(/-([a-z])/g, (_, c) => c.toUpperCase())] === String(uid));
+  const ids = () => document.querySelectorAll('[data-lb-open]').map((el) => el.dataset.lbOpen);
+  return { $, document, context, event, enter, row, ids, books, requests, errors, prompts, confirmations, urls, revoked, intervals, fail: (response) => { fail = response; } };
 }
 
 test('complete module startup succeeds and timer never refreshes lorebook forms', async () => {
@@ -173,29 +183,32 @@ test('complete module startup succeeds and timer never refreshes lorebook forms'
   assert.equal(p.requests.filter((r) => r.url === '/api/dashboard').length, 1);
   assert.equal(p.intervals.length, 1);
   await p.enter();
-  await p.document.querySelectorAll('[data-lb-open]').find((el) => el.dataset.lbOpen === '7').click();
+  await p.row('data-lb-open', 7).click();
   await p.event('#lb-field-content', 'change', 'Unsaved draft');
   const count = p.requests.length;
   p.intervals[0](); await tick();
   assert.equal(p.requests.length, count);
   assert.equal(p.$('#lb-field-content').value, 'Unsaved draft');
+  assert.equal(p.$('#lb-dirty-badge').hidden, false, '未保存改动必须有可见提示');
   assert.deepEqual(p.errors, []);
 });
 
-test('navigation smoke: real lorebook tab, bindings, empty second book; stickers untouched', async () => {
+test('navigation smoke: sidebar tab, real bindings, empty second book; stickers untouched', async () => {
   const p = panel(); await p.enter();
   assert.equal(p.$('#view-lorebooks').classList.contains('active'), true);
-  assert.match(p.$('#lb-book').innerHTML, /Eldoria/);
+  assert.equal(p.$('#main').classList.contains('fullbleed'), true);
+  assert.match(p.$('#lb-books').innerHTML, /Eldoria/);
+  assert.match(p.$('#lb-books').innerHTML, /3 条 · 2 启用/);
   assert.equal(p.$('#lb-enabled').checked, true);
   assert.equal(p.$('#lb-field-order').value, '', 'entry not opened yet');
-  await p.event('#lb-book', 'change', 2);
+  await p.row('data-lb-book', 2).click();
   assert.equal(p.$('#lb-enabled').checked, false);
-  assert.match(p.$('#lb-entries').innerHTML, /没有条目/);
+  assert.match(p.$('#lb-entries').innerHTML, /还是空的/);
   assert.ok(p.$('#view-memes')); assert.ok(p.$('#meme-grid')); assert.ok(p.$('#meme-edit-modal'));
   assert.ok(!html.includes('id="view-slang"'));
   assert.ok(!app.includes('/api/host/memes'));
-  assert.match(html, /只插入本轮当前 user 消息/);
-  assert.match(html, /不能按深度插入历史消息/);
+  assert.match(html, /只前置到本轮当前 user 消息/);
+  assert.match(html, /不决定插入位置/);
   assert.ok(vm.runInContext("NO_AUTOREFRESH.has('lorebooks')", p.context));
   assert.deepEqual(p.errors, []);
 });
@@ -203,7 +216,9 @@ test('navigation smoke: real lorebook tab, bindings, empty second book; stickers
 test('friendly controls and raw JSON synchronize without adding defaults or dropping unknown fields', async () => {
   const p = panel(); await p.enter();
   assert.ok(!p.$('#lb-entries').innerHTML.includes('<img src=x'));
-  const open = p.document.querySelectorAll('[data-lb-open]').find((el) => el.dataset.lbOpen === '7'); await open.click();
+  await p.row('data-lb-open', 7).click();
+  assert.equal(p.$('#lb-editor').hidden, false);
+  assert.equal(p.$('#lb-app').classList.contains('has-editor'), true);
   assert.equal(p.$('#lb-field-probability').value, '100');
   assert.equal(p.$('#lb-field-key').value, 'dragon\n/a,b/i');
   await p.event('#lb-field-content', 'change', 'Edited content');
@@ -226,34 +241,76 @@ test('friendly controls and raw JSON synchronize without adding defaults or drop
 
 test('text/group/active filters, numeric ordering, checkbox batch and blue/green toggles', async () => {
   const p = panel(); await p.enter();
-  const ids = () => p.document.querySelectorAll('[data-lb-open]').map((el) => el.dataset.lbOpen);
-  assert.deepEqual(ids(), ['8', '7', '9']);
-  await p.event('#lb-sort', 'change', 'asc'); assert.deepEqual(ids(), ['9', '7', '8']);
+  assert.deepEqual(p.ids(), ['8', '7', '9']);
+  await p.event('#lb-sort', 'change', 'asc'); assert.deepEqual(p.ids(), ['9', '7', '8']);
   await p.event('#lb-q', 'input', 'dragon'); await p.event('#lb-group', 'input', 'place');
-  assert.deepEqual(ids(), ['9', '7']);
+  assert.deepEqual(p.ids(), ['9', '7']);
   p.$('#lb-select-all').checked = true; await p.event('#lb-select-all', 'change');
+  assert.match(p.$('#lb-count').textContent, /已选 2/);
   await p.event('#lb-batch-off');
   assert.deepEqual(p.requests.find((r) => r.url.endsWith('/selection')).body, { bookId: 1, uids: [9, 7], enabled: false });
-  await p.event('#lb-active', 'change', 'on'); assert.deepEqual(ids(), []);
-  await p.event('#lb-active', 'change', 'off'); assert.deepEqual(ids(), ['9', '7']);
-  const mode = p.document.querySelectorAll('[data-lb-mode]').find((el) => el.dataset.lbMode === '7'); await mode.click();
+  await p.event('#lb-active', 'change', 'on'); assert.deepEqual(p.ids(), []);
+  await p.event('#lb-active', 'change', 'off'); assert.deepEqual(p.ids(), ['9', '7']);
+  const mode = p.row('data-lb-mode', 7); assert.ok(mode.classList.contains('lb-keyword'));
+  await mode.click();
   assert.equal(p.books.get(1).entries[7].constant, true);
-  assert.match(p.$('#lb-entries').innerHTML, /lb-constant/);
-  const active = p.document.querySelectorAll('[data-lb-active]').find((el) => el.dataset.lbActive === '7'); await active.click();
+  assert.ok(p.row('data-lb-mode', 7).classList.contains('lb-constant'));
+
+  const active = p.row('data-lb-active', 7); await active.click();
   assert.equal(p.books.get(1).entries[7].disable, false);
+  assert.deepEqual(p.ids(), ['9'], 'enabling an entry removes it from the 已禁用 filter');
+  await p.event('#lb-active', 'change', 'all');
+  assert.deepEqual(p.ids(), ['9', '7']);
+  assert.equal(p.row('data-lb-active', 7).classList.contains('off'), false);
+  assert.deepEqual(p.errors, []);
+});
+
+test('order steppers patch native order and move the row in the rendered sequence', async () => {
+  const p = panel(); await p.enter();
+  const move = (uid, dir) => p.document.querySelectorAll('[data-lb-move]')
+    .find((el) => el.dataset.lbUid === String(uid) && el.dataset.lbMove === String(dir));
+  assert.deepEqual(p.ids(), ['8', '7', '9']);
+
+  await move(8, 1).click();
+  let patch = p.requests.filter((r) => r.url.endsWith('/entry')).at(-1).body;
+  assert.equal(patch.entry.uid, 8);
+  assert.equal(patch.entry.order, 19, 'desc sort: moving down drops order below the neighbour');
+  assert.deepEqual(p.ids(), ['7', '8', '9']);
+
+  await p.event('#lb-sort', 'change', 'asc');
+  assert.deepEqual(p.ids(), ['9', '8', '7']);
+  await move(7, -1).click();
+  patch = p.requests.filter((r) => r.url.endsWith('/entry')).at(-1).body;
+  assert.equal(patch.entry.uid, 7);
+  assert.equal(patch.entry.order, 18, 'asc sort: moving up drops order below the neighbour');
+  assert.deepEqual(p.ids(), ['9', '7', '8']);
   assert.deepEqual(p.errors, []);
 });
 
 test('book create/rename/enable/delete and entry create/delete use native endpoint payloads', async () => {
-  const p = panel(); await p.enter(); p.prompts.push('New book'); await p.event('#lb-create');
-  assert.equal(p.$('#lb-book').value, '3');
-  p.prompts.push('Renamed'); await p.event('#lb-rename'); assert.equal(p.books.get(3).name, 'Renamed');
+  const p = panel(); await p.enter();
+  await p.event('#lb-create');
+  assert.equal(p.$('#lb-book-new').hidden, false);
+  p.$('#lb-book-new-name').value = 'New book';
+  await p.event('#lb-book-new-save');
+  assert.equal(p.$('#lb-book-title').textContent, 'New book');
+  assert.equal(p.books.get(3).name, 'New book');
+
+  await p.event('#lb-rename');
+  p.$('#lb-rename-input').value = 'Renamed';
+  await p.event('#lb-rename-save');
+  assert.equal(p.books.get(3).name, 'Renamed');
+  assert.equal(p.$('#lb-book-title').textContent, 'Renamed');
+
   p.$('#lb-enabled').checked = false; await p.event('#lb-enabled', 'change'); assert.equal(p.books.get(3).enabled, false);
+
   await p.event('#lb-new'); await p.event('#lb-field-content', 'change', 'New native entry'); await p.event('#lb-save');
   assert.deepEqual(p.books.get(3).entries[0], { uid: 0, content: 'New native entry' });
-  await p.document.querySelectorAll('[data-lb-open]')[0].click(); await p.event('#lb-entry-delete');
+  await p.row('data-lb-open', 0).click(); await p.event('#lb-entry-delete');
   assert.deepEqual(p.books.get(3).entries, {});
-  await p.event('#lb-delete'); assert.equal(p.books.has(3), false); assert.equal(p.$('#lb-book').value, '1');
+  await p.event('#lb-delete');
+  assert.equal(p.books.has(3), false);
+  assert.equal(p.$('#lb-book-title').textContent, 'Eldoria');
   assert.deepEqual(p.errors, []);
 });
 
@@ -263,13 +320,21 @@ test('native JSON file import → friendly edit → downloadable export preserve
     41: { uid: 41, key: ['/x,y/i'], content: 'Imported', customFlag: { timing: [3, 9] }, position: 4, depth: 6, role: 2, cooldown: 8 },
   } };
   await p.event('#lb-import');
-  p.$('#lb-file').files = [{ name: 'Native.json', text: async () => JSON.stringify(native) }]; p.prompts.push('Imported book');
+  assert.equal(p.$('#lb-import-dialog').hidden, false);
+  p.$('#lb-file').files = [{ name: 'Native.json', text: async () => JSON.stringify(native) }];
   await p.event('#lb-file', 'change');
-  assert.deepEqual(p.requests.find((r) => r.url.endsWith('/import')).body, { name: 'Imported book', dataText: JSON.stringify(native) });
-  await p.document.querySelectorAll('[data-lb-open]')[0].click();
+  assert.match(p.$('#lb-import-preview').innerHTML, /1/);
+  assert.equal(p.$('#lb-import-name').value, 'Native');
+  await p.event('#lb-import-confirm');
+  assert.deepEqual(p.requests.find((r) => r.url.endsWith('/import')).body, { name: 'Native', dataText: JSON.stringify(native) });
+  assert.equal(p.$('#lb-import-dialog').hidden, true);
+
+  await p.row('data-lb-open', 41).click();
   await p.event('#lb-field-comment', 'change', 'Edited title'); await p.event('#lb-save');
   await p.event('#lb-export');
-  assert.equal(p.document.downloads[0].name, 'Imported book.json');
+  assert.equal(p.$('#lb-export-name').value, 'Native.json');
+  await p.event('#lb-export-download');
+  assert.equal(p.document.downloads[0].name, 'Native.json');
   const blob = p.urls.get(p.document.downloads[0].url);
   assert.equal(blob.type, 'application/json');
   const expected = plain(native); expected.entries[41].comment = 'Edited title';
@@ -280,6 +345,8 @@ test('native JSON file import → friendly edit → downloadable export preserve
 
 test('settings fallback values round-trip false and zero with all native names', async () => {
   const p = panel(); await p.enter();
+  await p.event('#lb-settings-open');
+  assert.equal(p.$('#lb-settings-dialog').hidden, false);
   assert.equal(p.$('#lb-setting-scanDepth').value, '2');
   assert.equal(p.$('#lb-setting-recursive').checked, true);
   assert.equal(p.$('#lb-setting-budgetTokens').value, '2048');
@@ -291,18 +358,19 @@ test('settings fallback values round-trip false and zero with all native names',
     caseSensitive: false, matchWholeWords: false, useGroupScoring: false,
   });
   assert.equal(p.$('#lb-setting-budgetTokens').value, '0');
+  assert.equal(p.$('#lb-settings-dialog').hidden, true);
   assert.deepEqual(p.errors, []);
 });
 
 test('invalid raw JSON and uid edits cannot save; dirty switch cancellation and API errors are surfaced', async () => {
   const p = panel(); await p.enter();
-  await p.document.querySelectorAll('[data-lb-open]').find((el) => el.dataset.lbOpen === '7').click();
+  await p.row('data-lb-open', 7).click();
   const before = p.requests.filter((r) => r.method === 'POST').length;
   await p.event('#lb-raw', 'input', '{broken'); await p.event('#lb-save');
   assert.ok(p.$('#lb-json-error').textContent); assert.equal(p.errors.length, 1);
   await p.event('#lb-raw', 'input', '{"uid":8}'); await p.event('#lb-save'); assert.match(p.errors.at(-1), /uid/);
   assert.equal(p.requests.filter((r) => r.method === 'POST').length, before);
-  p.confirmations.push(false); await p.event('#lb-book', 'change', '2'); assert.equal(p.$('#lb-book').value, '1');
+  p.confirmations.push(false); await p.row('data-lb-book', 2).click(); assert.equal(p.$('#lb-book-title').textContent, 'Eldoria');
   assert.equal(p.$('#lb-editor').hidden, false);
   await p.event('#lb-cancel');
   p.fail({ ok: false, error: 'host unavailable' }); await p.event('#refresh-btn');
@@ -310,11 +378,23 @@ test('invalid raw JSON and uid edits cannot save; dirty switch cancellation and 
   assert.equal(p.$('#lb-create').disabled, false, 'failed actions release busy guard');
 });
 
+test('dirty editor also blocks tab navigation until discarded', async () => {
+  const p = panel(); await p.enter();
+  await p.row('data-lb-open', 7).click();
+  await p.event('#lb-field-content', 'change', 'Draft');
+  const overview = p.document.querySelectorAll('.tab').find((el) => el.dataset.view === 'overview');
+  p.confirmations.push(false); await overview.click(); await tick();
+  assert.equal(p.$('#view-lorebooks').classList.contains('active'), true, 'cancel keeps the user on the dirty page');
+  p.confirmations.push(true); await overview.click(); await tick();
+  assert.equal(p.$('#view-overview').classList.contains('active'), true);
+  assert.equal(p.$('#lb-editor').hidden, true, 'confirmed discard closes the editor');
+});
+
 test('no-op saves do not inject uid/defaults; fractional weights and invalid numeric edits are safe', async () => {
   const p = panel(); await p.enter();
   delete p.books.get(1).entries[7].uid;
   await p.event('#refresh-btn');
-  const open = () => p.document.querySelectorAll('[data-lb-open]').find((el) => el.dataset.lbOpen === '7').click();
+  const open = async () => { await p.row('data-lb-open', 7).click(); };
   await open();
   await p.event('#lb-save');
   assert.equal(p.requests.some((r) => r.url.endsWith('/entry')), false);
@@ -337,7 +417,7 @@ test('no-op saves do not inject uid/defaults; fractional weights and invalid num
 
 test('raw deletions unsupported by merge API and null uid changes fail explicitly', async () => {
   const p = panel(); await p.enter();
-  await p.document.querySelectorAll('[data-lb-open]').find((el) => el.dataset.lbOpen === '7').click();
+  await p.row('data-lb-open', 7).click();
   const raw = JSON.parse(p.$('#lb-raw').value);
   raw.uid = null; await p.event('#lb-raw', 'input', JSON.stringify(raw)); await p.event('#lb-save');
   assert.match(p.errors.at(-1), /uid/);
@@ -350,7 +430,7 @@ test('raw deletions unsupported by merge API and null uid changes fail explicitl
 
 test('raw removal is blocked by partial merge contract; invalid friendly fields block save', async () => {
   const p = panel(); await p.enter();
-  await p.document.querySelectorAll('[data-lb-open]').find((el) => el.dataset.lbOpen === '7').click();
+  await p.row('data-lb-open', 7).click();
   const original = JSON.parse(p.$('#lb-raw').value);
   const missing = plain(original); delete missing.extension.nested;
   await p.event('#lb-raw', 'input', JSON.stringify(missing)); await p.event('#lb-save');
@@ -369,28 +449,32 @@ test('raw removal is blocked by partial merge contract; invalid friendly fields 
 
 test('malformed imports and failed enable switches report errors without destructive requests', async () => {
   const p = panel(); await p.enter();
+  await p.event('#lb-import');
   p.$('#lb-file').files = [{ name: 'wrong.json', text: async () => '{"entries":[]}' }];
   await p.event('#lb-file', 'change'); assert.match(p.errors.at(-1), /entries/);
   assert.equal(p.requests.some((r) => r.url.endsWith('/import')), false);
+  assert.equal(p.$('#lb-import-confirm').disabled, true);
+  await p.event('#lb-import-cancel');
   p.fail({ ok: false, error: 'write rejected' }); p.$('#lb-enabled').checked = false;
   await p.event('#lb-enabled', 'change'); assert.equal(p.$('#lb-enabled').checked, true);
   assert.match(p.errors.at(-1), /write rejected/);
 });
 
-
 test('native file text and raw editor preserve unsafe integer extensions, including sibling edits', async () => {
   const p = panel(); await p.enter();
   const dataText = '{"vendor":{"id":9007199254740993},"entries":{"41":{"uid":41,"content":"Native","extension":{"id":9007199254740993,"negative":-9007199254740993,"text":"9007199254740993"}}}}';
+  await p.event('#lb-import');
   p.$('#lb-file').files = [{ name: 'Large.json', text: async () => dataText }];
-  p.prompts.push('Large'); await p.event('#lb-file', 'change');
+  await p.event('#lb-file', 'change');
+  await p.event('#lb-import-confirm');
   assert.deepEqual(p.requests.find((r) => r.url.endsWith('/import')).body, { name: 'Large', dataText });
-  await p.document.querySelectorAll('[data-lb-open]')[0].click();
+  await p.row('data-lb-open', 41).click();
   assert.match(p.$('#lb-raw').value, /"id": 9007199254740993/);
   await p.event('#lb-field-comment', 'change', 'Friendly edit');
   assert.match(p.$('#lb-raw').value, /"id": 9007199254740993/);
   await p.event('#lb-save');
   assert.deepEqual(p.requests.find((r) => r.url.endsWith('/entry')).body.entry, { uid: 41, comment: 'Friendly edit' }, 'untouched extension is not patched');
-  await p.document.querySelectorAll('[data-lb-open]')[0].click();
+  await p.row('data-lb-open', 41).click();
   await p.event('#lb-raw', 'input', p.$('#lb-raw').value.replace('"extension": {', '"extension": {"sibling": true,'));
   await p.event('#lb-save');
   const patch = p.requests.filter((r) => r.url.endsWith('/entry')).at(-1).body;
@@ -398,6 +482,7 @@ test('native file text and raw editor preserve unsafe integer extensions, includ
   assert.match(patch.entryText, /"id":9007199254740993/);
   assert.match(patch.entryText, /"negative":-9007199254740993/);
   await p.event('#lb-export');
+  await p.event('#lb-export-download');
   const output = await p.urls.get(p.document.downloads[0].url).text();
   assert.equal((output.match(/"id": 9007199254740993/g) || []).length, 2, 'root and nested extension numbers retain their values');
   assert.match(output, /"negative": -9007199254740993/);
@@ -418,4 +503,20 @@ test('raw integer parsing rejects malformed numbers and never treats marker-like
   await p.event('#lb-raw', 'input', '{"bad":09007199254740993}'); await p.event('#lb-save');
   assert.equal(p.requests.filter((r) => r.url.endsWith('/entry')).length, 1);
   assert.ok(p.errors.length);
+});
+
+test('redesigned console ships the three-pane shell, tooltips and no framework/build dependency', async () => {
+  assert.match(html, /class="lb-app"/);
+  assert.match(html, /id="lb-books"/);
+  assert.match(html, /id="lb-books-panel"/);
+  assert.match(html, /id="lb-rename-input"/);
+  assert.match(html, /data-tip="蓝灯 \/ constant/);
+  assert.match(html, /存储兼容[\s\S]*不影响注入位置|不影响注入位置/);
+  assert.match(html, /id="lb-import-dialog"/);
+  assert.match(html, /id="lb-export-dialog"/);
+  assert.match(css, /--lamp-blue/);
+  assert.match(css, /--lamp-green/);
+  assert.ok(!/<script[^>]+src="https?:/.test(html), 'no CDN scripts');
+  assert.ok(!html.includes('@import'), 'no remote CSS imports');
+  assert.ok(!app.includes("from 'react'") && !app.includes('vue'), 'no framework');
 });

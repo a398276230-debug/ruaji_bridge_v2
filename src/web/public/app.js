@@ -109,10 +109,36 @@ export function fmtTime(ts) {
 
 const state = { view: 'overview', selectedTrace: null, autorefresh: true, timer: null };
 
+function setNavOpen(open) {
+  document.body.classList.toggle('nav-open', open);
+  $('#nav-scrim').hidden = !open;
+}
+
+function closeLoreDialogs() {
+  for (const id of ['lb-import-dialog', 'lb-export-dialog', 'lb-settings-dialog']) closeDialog(id);
+}
+
 function switchView(view) {
+  // 离开世界书前先处理未保存的条目：被取消就留在原地，不切视图。
+  if (view !== state.view) {
+    if (state.view === 'lorebooks' && lore.settingsDirty && !confirm('世界书设置尚未保存，确定离开？')) return;
+    if (state.view === 'lorebooks' && !discardLore()) return;
+    if (state.view === 'lorebooks') {
+      closeLoreEditor();
+      closeLoreDialogs();
+      setBooksDrawer(false);
+    }
+  }
   state.view = view;
   $$('.tab').forEach((t) => t.classList.toggle('active', t.dataset.view === view));
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${view}`));
+  $('#main').classList.toggle('fullbleed', view === 'lorebooks');
+  const tab = $$('.tab').find((t) => t.dataset.view === view);
+  if (tab) {
+    $('#page-title').textContent = tab.querySelector('.nav-label')?.textContent || tab.textContent.trim();
+    document.title = `RUAJI Bridge v2 · ${$('#page-title').textContent}`;
+  }
+  setNavOpen(false);
   refresh();
 }
 
@@ -920,45 +946,48 @@ async function testMemeTag() {
 
 // ============================================================ 世界书
 
-// These are display fallbacks only. Never expand them into stored native JSON.
+// 展示用默认值。只在求值时使用，绝不把它们写回原生 JSON。
 const LB_FIELDS = [
-  ['comment', '标题 / 注释', 'text', ''],
-  ['key', '主关键词（每行一项）', 'list', []],
-  ['keysecondary', '次关键词（每行一项）', 'list', []],
-  ['selective', '启用次关键词条件', 'bool', true],
-  ['selectiveLogic', '次关键词逻辑', 'select', 0, [[0, 'AND ANY'], [1, 'NOT ALL'], [2, 'NOT ANY'], [3, 'AND ALL']]],
-  ['content', '正文', 'textarea', ''],
-  ['constant', '蓝色常驻（关闭 = 绿色关键词）', 'bool', false],
-  ['disable', '禁用条目', 'bool', false],
-  ['group', '互斥分组', 'text', ''],
-  ['groupOverride', '分组优先覆盖', 'bool', false],
-  ['groupWeight', '分组权重', 'number', 100],
-  ['order', 'Order 排序（数字）', 'number', 100],
-  ['position', '原生位置（受当前 user 锚点限制）', 'select', 0, [[0, '角色定义前'], [1, '角色定义后'], [2, '作者注释前'], [3, '作者注释后'], [4, '深度 @D'], [5, '示例前'], [6, '示例后'], [7, 'Outlet']]],
-  ['depth', '深度 depth（仅保留 / 当前消息内锚点）', 'number', 4],
-  ['role', '原生角色（不创建独立角色消息）', 'select', 0, [[0, 'System'], [1, 'User'], [2, 'Assistant']]],
-  ['outletName', 'Outlet 名称', 'text', ''],
-  ['probability', '概率 %', 'number', 100],
-  ['useProbability', '使用概率', 'bool', true],
-  ['scanDepth', '扫描深度（空 = 全局）', 'nullableNumber', null],
-  ['caseSensitive', '区分大小写', 'tri', null],
-  ['matchWholeWords', '整词匹配', 'tri', null],
-  ['useGroupScoring', '分组评分', 'tri', null],
-  ['sticky', 'Sticky 持续轮数（空 = 默认）', 'nullableNumber', null],
-  ['cooldown', 'Cooldown 冷却轮数（空 = 默认）', 'nullableNumber', null],
-  ['delay', 'Delay 延迟轮数（空 = 默认）', 'nullableNumber', null],
-  ['delayUntilRecursion', '递归延迟步骤', 'number', 0],
-  ['excludeRecursion', '不由递归触发', 'bool', false],
-  ['preventRecursion', '阻止触发后续递归', 'bool', false],
-  ['ignoreBudget', '忽略预算', 'bool', false],
-  ['vectorized', '原生向量标记（保留）', 'bool', false],
-  ['addMemo', '附加注释标记', 'bool', false],
-  ...['matchPersonaDescription', 'matchCharacterDescription', 'matchCharacterPersonality', 'matchCharacterDepthPrompt', 'matchScenario', 'matchCreatorNotes'].map((key) => [key, `扫描 ${key}`, 'bool', false]),
-  ['automationId', 'Automation ID', 'text', ''],
-  ['characterFilterNames', '角色名称过滤（每行一项）', 'list', []],
-  ['characterFilterTags', '角色标签过滤（每行一项）', 'list', []],
-  ['characterFilterExclude', '排除匹配角色', 'bool', false],
-  ['triggers', '触发类型（每行一项）', 'list', []],
+  // —— 常用字段 ——
+  ['comment', '标题 / 注释', 'text', '', null, 'basic'],
+  ['key', '主关键词（每行一项）', 'list', [], null, 'basic'],
+  ['keysecondary', '次关键词（每行一项）', 'list', [], null, 'basic'],
+  ['content', '正文', 'textarea', '', null, 'basic'],
+  ['constant', '蓝灯常驻', 'bool', false, null, 'basic'],
+  ['disable', '禁用条目', 'bool', false, null, 'basic'],
+  ['group', '互斥分组', 'text', '', null, 'basic'],
+  ['order', 'Order 排序', 'number', 100, null, 'basic'],
+  // —— 高级 / 原生兼容字段 ——
+  ['selective', '启用次关键词条件', 'bool', true, null, 'advanced'],
+  ['selectiveLogic', '次关键词逻辑', 'select', 0, [[0, 'AND ANY'], [1, 'NOT ALL'], [2, 'NOT ANY'], [3, 'AND ALL']], 'advanced'],
+  ['groupOverride', '分组优先覆盖', 'bool', false, null, 'advanced'],
+  ['groupWeight', '分组权重', 'number', 100, null, 'advanced'],
+  ['position', '原生位置', 'select', 0, [[0, '角色定义前'], [1, '角色定义后'], [2, '作者注释前'], [3, '作者注释后'], [4, '深度 @D'], [5, '示例前'], [6, '示例后'], [7, 'Outlet']], 'advanced'],
+  ['depth', '深度 depth', 'number', 4, null, 'advanced'],
+  ['role', '原生角色', 'select', 0, [[0, 'System'], [1, 'User'], [2, 'Assistant']], 'advanced'],
+  ['outletName', 'Outlet 名称', 'text', '', null, 'advanced'],
+  ['probability', '概率 %', 'number', 100, null, 'advanced'],
+  ['useProbability', '使用概率', 'bool', true, null, 'advanced'],
+  ['scanDepth', '扫描深度（空 = 全局）', 'nullableNumber', null, null, 'advanced'],
+  ['caseSensitive', '区分大小写', 'tri', null, null, 'advanced'],
+  ['matchWholeWords', '整词匹配', 'tri', null, null, 'advanced'],
+  ['useGroupScoring', '分组评分', 'tri', null, null, 'advanced'],
+  ['sticky', 'Sticky 持续轮数（空 = 默认）', 'nullableNumber', null, null, 'advanced'],
+  ['cooldown', 'Cooldown 冷却轮数（空 = 默认）', 'nullableNumber', null, null, 'advanced'],
+  ['delay', 'Delay 延迟轮数（空 = 默认）', 'nullableNumber', null, null, 'advanced'],
+  ['delayUntilRecursion', '递归延迟步骤', 'number', 0, null, 'advanced'],
+  ['excludeRecursion', '不由递归触发', 'bool', false, null, 'advanced'],
+  ['preventRecursion', '阻止触发后续递归', 'bool', false, null, 'advanced'],
+  ['ignoreBudget', '忽略引擎预算', 'bool', false, null, 'advanced'],
+  ['vectorized', '原生向量标记', 'bool', false, null, 'advanced'],
+  ['addMemo', '附加注释标记', 'bool', false, null, 'advanced'],
+  ...['matchPersonaDescription', 'matchCharacterDescription', 'matchCharacterPersonality', 'matchCharacterDepthPrompt', 'matchScenario', 'matchCreatorNotes']
+    .map((key) => [key, `扫描 ${key}`, 'bool', false, null, 'advanced']),
+  ['automationId', 'Automation ID', 'text', '', null, 'advanced'],
+  ['characterFilterNames', '角色名称过滤（每行一项）', 'list', [], null, 'advanced'],
+  ['characterFilterTags', '角色标签过滤（每行一项）', 'list', [], null, 'advanced'],
+  ['characterFilterExclude', '排除匹配角色', 'bool', false, null, 'advanced'],
+  ['triggers', '触发类型（每行一项）', 'list', [], null, 'advanced'],
 ];
 const LB_SETTINGS = [
   ['enabled', '世界书总开关', 'bool', true],
@@ -970,7 +999,37 @@ const LB_SETTINGS = [
   ['matchWholeWords', '整词匹配', 'bool', false],
   ['useGroupScoring', '分组评分', 'bool', false],
 ];
-const lore = { books: [], bookId: null, entries: [], selected: new Set(), editing: null, initial: '', changed: new Set(), invalid: new Set(), settingsDirty: false, busy: false, load: 0 };
+
+const LB_TIPS = {
+  constant: '蓝灯：不需要关键词命中，每轮都可能注入；仍受禁用、概率、分组、预算和时效约束。',
+  selective: '只控制次关键词门禁，不是“是否启用”。关掉后仍需要主关键词命中。',
+  position: '存储兼容：不决定插入位置，命中正文统一进入本轮 user 顶部资料块。',
+  depth: '存储兼容：不按深度插入历史，只保留原生数值。',
+  role: '存储兼容：不创建独立角色的消息，实际始终随 user 注入。',
+  outletName: '存储兼容：不输出 outlet，正文仍进入同一资料块。',
+  vectorized: '原样保存；当前没有向量 provider，不会因为这个标志单独激活。',
+  ignoreBudget: '只绕过引擎正文挑选预算；最终完整前置块仍有第二道字节预算。',
+};
+
+const lore = {
+  books: [],
+  bookId: null,
+  entries: [],
+  selected: new Set(),
+  editing: null,
+  initial: '',
+  changed: new Set(),
+  invalid: new Set(),
+  settingsDirty: false,
+  busy: false,
+  loading: false,
+  stats: new Map(),
+  load: 0,
+  pendingImport: null,
+  booksOpen: false,
+};
+
+const loreById = (id) => $('#' + id);
 
 async function loreApi(action, body, query = '') {
   const result = await api(`/api/host/lorebooks/${action}${query}`, body === undefined ? undefined : { method: 'POST', body });
@@ -978,51 +1037,133 @@ async function loreApi(action, body, query = '') {
   return result;
 }
 
-// All event promises are caught here, including native JSON / file parsing errors.
+// 所有事件异常都在这里收口：包括原生 JSON 解析、文件读取和网络错误。
 async function loreAction(fn) {
   if (lore.busy) return;
   lore.busy = true;
   updateLoreControls();
   try { await fn(); }
-  catch (e) { $('#lb-status').textContent = `操作失败：${e.message}`; toast(e.message, true); }
-  finally { lore.busy = false; updateLoreControls(); }
+  catch (e) {
+    setLoreStatus(`操作失败：${e.message}`, 'err');
+    toast(e.message, true);
+  }
+  finally {
+    lore.busy = false;
+    updateLoreControls();
+  }
+}
+
+function setLoreStatus(text, kind = '') {
+  const el = $('#lb-status');
+  el.textContent = text;
+  el.classList.remove('err', 'ok');
+  if (kind) el.classList.add(kind);
+}
+
+function currentLoreBook() {
+  return lore.books.find((b) => b.id === lore.bookId) || null;
 }
 
 function updateLoreControls() {
   const noBook = lore.bookId == null;
-  for (const id of ['book', 'create', 'import', 'settings-save']) $('#lb-' + id).disabled = lore.busy;
-  for (const id of ['enabled', 'rename', 'delete', 'export', 'new']) $('#lb-' + id).disabled = lore.busy || noBook;
-  for (const id of ['batch-on', 'batch-off']) $('#lb-' + id).disabled = lore.busy || noBook || !lore.selected.size;
-  $('#lb-save').disabled = lore.busy || noBook;
-  $('#lb-entry-delete').disabled = lore.busy || lore.editing == null;
+  const busy = lore.busy;
+  for (const id of ['lb-create', 'lb-import', 'lb-settings-open', 'lb-book-new-save']) {
+    loreById(id).disabled = busy;
+  }
+  for (const id of ['lb-enabled', 'lb-rename', 'lb-delete', 'lb-export', 'lb-new', 'lb-rename-save']) {
+    loreById(id).disabled = busy || noBook;
+  }
+  for (const id of ['lb-batch-on', 'lb-batch-off']) {
+    loreById(id).disabled = busy || noBook || !lore.selected.size;
+  }
+  loreById('lb-save').disabled = busy || noBook;
+  loreById('lb-entry-delete').disabled = busy || lore.editing == null;
+  loreById('lb-import-confirm').disabled = busy || !lore.pendingImport;
+  loreById('lb-export-download').disabled = busy || noBook;
+  loreById('lb-export-copy').disabled = busy || noBook;
 }
 
-function loreDirty() { return !$('#lb-editor').hidden && ($('#lb-raw').value !== lore.initial || lore.invalid.size > 0); }
-function discardLore() { return !loreDirty() || confirm('条目有未保存修改，确定放弃？'); }
-function closeLoreEditor() { $('#lb-editor').hidden = true; lore.editing = null; }
+function loreDirty() {
+  return !$('#lb-editor').hidden && ($('#lb-raw').value !== lore.initial || lore.invalid.size > 0);
+}
+
+function discardLore() {
+  return !loreDirty() || confirm('条目有未保存修改，确定放弃？');
+}
+
+function updateDirtyBadge() {
+  $('#lb-dirty-badge').hidden = !loreDirty();
+}
+
+function closeLoreEditor() {
+  $('#lb-editor').hidden = true;
+  $('#lb-app').classList.remove('has-editor');
+  lore.editing = null;
+  lore.invalid.clear();
+  $('#lb-json-error').textContent = '';
+  updateDirtyBadge();
+}
+
+function setBooksDrawer(open) {
+  lore.booksOpen = Boolean(open);
+  $('#lb-books-panel').classList.toggle('is-open', lore.booksOpen);
+  $('#lb-books-scrim').hidden = !lore.booksOpen;
+}
+
+function openDialog(id) {
+  const dialog = loreById(id);
+  if (typeof dialog?.showModal === 'function') {
+    if (!dialog.open) dialog.showModal();
+  } else if (dialog) {
+    dialog.hidden = false;
+  }
+}
+
+function closeDialog(id) {
+  const dialog = loreById(id);
+  if (typeof dialog?.close === 'function') {
+    if (dialog.open) dialog.close();
+  } else if (dialog) {
+    dialog.hidden = true;
+  }
+}
+
+// ------------------------------------------------------------ 字段渲染
 
 function loreFieldMarkup([key, label, type, fallback, choices], prefix) {
   const id = `${prefix}${key}`;
+  const span = type === 'textarea' ? ' span-2' : '';
+  const tip = LB_TIPS[key] ? `<span class="field-help">${esc(LB_TIPS[key])}</span>` : '';
+  if (type === 'bool') {
+    return `<label class="field field-check${span}" for="${id}"><input id="${id}" type="checkbox"><span class="field-label">${esc(label)}</span>${LB_TIPS[key] ? `<span class="field-help">${esc(LB_TIPS[key])}</span>` : ''}</label>`;
+  }
   let control;
-  if (type === 'bool') control = `<input id="${id}" type="checkbox">`;
-  else if (type === 'select' || type === 'tri') {
+  if (type === 'select' || type === 'tri') {
     const options = type === 'tri' ? [['', '继承全局'], ['true', '是'], ['false', '否']] : choices;
     control = `<select id="${id}">${options.map(([value, text]) => `<option value="${value}">${esc(text)}</option>`).join('')}</select>`;
-  } else if (type === 'list' || type === 'textarea') control = `<textarea id="${id}" rows="${type === 'list' ? 3 : 7}"></textarea>`;
-  else control = `<input id="${id}" type="${type.includes('Number') || type === 'number' ? 'number' : 'text'}"${type === 'text' ? '' : ` step="${['probability', 'groupWeight'].includes(key) ? 'any' : '1'}"`}>`;
-  return `<label class="${type === 'bool' ? 'check' : type === 'textarea' ? 'full' : ''}">${esc(label)} <span class="hint">${esc(key)}</span>${control}</label>`;
+  } else if (type === 'list' || type === 'textarea') {
+    control = `<textarea id="${id}" rows="${type === 'list' ? 3 : 7}"></textarea>`;
+  } else {
+    const numeric = type.includes('Number') || type === 'number';
+    const step = ['probability', 'groupWeight'].includes(key) ? 'any' : '1';
+    control = `<input id="${id}" type="${numeric ? 'number' : 'text'}"${numeric ? ` step="${step}"` : ''}>`;
+  }
+  return `<label class="field${span}" for="${id}"><span class="field-label">${esc(label)} <code>${esc(key)}</code></span>${control}${tip}</label>`;
 }
 
 function fillLoreFields(fields, raw, prefix) {
   for (const [key, , type, fallback] of fields) {
-    const el = $('#' + prefix + key);
+    const el = loreById(prefix + key);
     const value = raw[key] ?? fallback;
     if (type === 'bool') el.checked = Boolean(value);
     else {
       const text = type === 'list' ? (Array.isArray(value) ? value.join('\n') : String(value)) : value ?? '';
-      // Native future enum values remain visible and are not silently coerced.
+      // 原生未来的枚举值原样显示，不静默改写成默认值。
       if (type === 'select' && ![...el.options].some((o) => o.value === String(text))) {
-        const option = document.createElement('option'); option.value = String(text); option.textContent = `原生值 ${text}`; el.appendChild(option);
+        const option = document.createElement('option');
+        option.value = String(text);
+        option.textContent = `原生值 ${text}`;
+        el.appendChild(option);
       }
       el.value = String(text);
     }
@@ -1030,7 +1171,7 @@ function fillLoreFields(fields, raw, prefix) {
 }
 
 function readLoreField([key, , type], prefix) {
-  const el = $('#' + prefix + key);
+  const el = loreById(prefix + key);
   if (type === 'bool') return el.checked;
   if (type === 'tri') return el.value === '' ? null : el.value === 'true';
   if (type === 'list') return el.value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
@@ -1043,6 +1184,8 @@ function readLoreField([key, , type], prefix) {
   }
   return el.value;
 }
+
+// ------------------------------------------------------------ 原生 JSON 安全通道
 
 // JSON numbers outside Number's safe integer range must never pass through
 // JSON.parse/stringify as Numbers. Match strings first so numeric-looking text
@@ -1089,20 +1232,57 @@ function trackLoreChanges(raw) {
 function syncLoreRaw() {
   try {
     const raw = parseLoreRaw();
-    fillLoreFields(LB_FIELDS, raw, 'lb-field-'); trackLoreChanges(raw); lore.invalid.clear();
-    $('#lb-json-error').textContent = ''; return true;
+    fillLoreFields(LB_FIELDS, raw, 'lb-field-');
+    trackLoreChanges(raw);
+    lore.invalid.clear();
+    $('#lb-json-error').textContent = '';
+    updateDirtyBadge();
+    return true;
+  } catch (e) {
+    $('#lb-json-error').textContent = e.message;
+    return false;
   }
-  catch (e) { $('#lb-json-error').textContent = e.message; return false; }
 }
+
+function applyLoreField(field) {
+  const el = loreById('lb-field-' + field[0]);
+  try {
+    const raw = parseLoreRaw();
+    raw[field[0]] = readLoreField(field, 'lb-field-');
+    $('#lb-raw').value = stringifyLoreJson(raw, 2);
+    trackLoreChanges(raw);
+    lore.invalid.delete(field[0]);
+    $('#lb-json-error').textContent = lore.invalid.size ? '请修正无效字段，或重新编辑 JSON。' : '';
+    el.closest?.('.field')?.classList.remove('invalid');
+  } catch (e) {
+    lore.invalid.add(field[0]);
+    $('#lb-json-error').textContent = e.message;
+    el.closest?.('.field')?.classList.add('invalid');
+  }
+  updateDirtyBadge();
+}
+
+// ------------------------------------------------------------ 列表与编辑
 
 function openLoreEditor(entry) {
   if (lore.busy || !discardLore()) return;
+  const book = currentLoreBook();
   lore.editing = entry?.uid ?? null;
+  lore.invalid.clear();
   $('#lb-raw').value = entry?.entryText ?? JSON.stringify(entry?.raw ?? {}, null, 2);
   lore.initial = $('#lb-raw').value;
-  $('#lb-editor-title').textContent = entry ? `编辑条目 #${entry.uid}` : '新条目（保存后分配 UID）';
+  $('#lb-editor-title').textContent = entry ? `条目 #${entry.uid}` : '新建条目';
+  $('#lb-editor-sub').textContent = entry
+    ? `${book?.name ?? ''} · uid ${entry.uid}${entry.raw?.comment ? ` · ${entry.raw.comment}` : ''}`
+    : `${book?.name ?? ''} · 保存后分配 uid`;
   $('#lb-editor').hidden = false;
-  syncLoreRaw(); updateLoreControls();
+  $('#lb-app').classList.add('has-editor');
+  $('#lb-json-error').textContent = '';
+  syncLoreRaw();
+  updateDirtyBadge();
+  updateLoreControls();
+  $('#lb-editor-body')?.scrollTo?.({ top: 0 });
+  setBooksDrawer(false);
 }
 
 function filteredLoreEntries() {
@@ -1110,130 +1290,370 @@ function filteredLoreEntries() {
   const group = $('#lb-group').value.trim().toLowerCase();
   const active = $('#lb-active').value;
   return lore.entries.filter(({ raw }) => {
-    const text = [raw.comment, raw.content, ...(raw.key || []), ...(raw.keysecondary || [])].join(' ').toLowerCase();
-    return text.includes(q) && String(raw.group ?? '').toLowerCase().includes(group)
+    const keys = [...(Array.isArray(raw.key) ? raw.key : []), ...(Array.isArray(raw.keysecondary) ? raw.keysecondary : [])];
+    const text = [raw.comment, raw.content, ...keys].join(' ').toLowerCase();
+    return text.includes(q)
+      && String(raw.group ?? '').toLowerCase().includes(group)
       && (active === 'all' || (active === 'off') === Boolean(raw.disable));
-  }).sort((a, b) => (($('#lb-sort').value === 'asc' ? 1 : -1) * ((a.raw.order ?? 100) - (b.raw.order ?? 100))) || a.uid - b.uid);
+  }).sort((a, b) => {
+    const ao = Number.isFinite(Number(a.raw.order)) ? Number(a.raw.order) : 100;
+    const bo = Number.isFinite(Number(b.raw.order)) ? Number(b.raw.order) : 100;
+    const dir = $('#lb-sort').value === 'asc' ? 1 : -1;
+    return (dir * (ao - bo)) || a.uid - b.uid;
+  });
+}
+
+function loreRowMarkup({ uid, raw }) {
+  const keys = Array.isArray(raw.key) ? raw.key.filter((k) => typeof k === 'string' && k.trim()) : [];
+  const chips = keys.slice(0, 3).map((k) => `<span class="key-chip" title="${esc(k)}">${esc(k)}</span>`).join('')
+    + (keys.length > 3 ? `<span class="key-more">+${keys.length - 3}</span>` : '');
+  const constant = Boolean(raw.constant);
+  const disabled = Boolean(raw.disable);
+  const order = Number.isFinite(Number(raw.order)) ? Number(raw.order) : 100;
+  const lampClass = `${constant ? 'blue lb-constant' : 'green lb-keyword'}${disabled ? ' lb-disabled' : ''}`;
+  const lampTitle = constant ? '蓝灯 · 常驻：无需关键词命中（点击改为绿灯）' : '绿灯 · 关键词：命中主关键词后注入（点击改为蓝灯）';
+  return `<tr class="lb-row${disabled ? ' is-disabled' : ''}" data-lb-row="${uid}">
+    <td class="c-check"><input type="checkbox" data-lb-select="${uid}" aria-label="选择条目 ${uid}"${lore.selected.has(uid) ? ' checked' : ''}></td>
+    <td class="c-lamp"><button type="button" class="lamp ${lampClass}" data-lb-mode="${uid}" title="${lampTitle}" aria-label="${constant ? '常驻，点击改为关键词' : '关键词，点击改为常驻'}"></button></td>
+    <td class="c-name"><button type="button" class="lb-name" data-lb-open="${uid}">
+      <span class="lb-name-text">${esc(raw.comment || `条目 #${uid}`)}</span>
+      <span class="lb-name-sub">#${uid}${keys.length ? ` · ${keys.length} 关键词` : ''}${raw.content ? ` · ${String(raw.content).length} 字符` : ''}</span>
+    </button></td>
+    <td class="c-keys">${chips || '<span class="key-more">—</span>'}</td>
+    <td class="c-group">${esc(raw.group || '—')}</td>
+    <td class="c-order"><span class="order-step">
+      <button type="button" data-lb-move="-1" data-lb-uid="${uid}" title="上移（提高 order）" aria-label="上移条目 ${uid}">▴</button>
+      <span class="order-val">${order}</span>
+      <button type="button" data-lb-move="1" data-lb-uid="${uid}" title="下移（降低 order）" aria-label="下移条目 ${uid}">▾</button>
+    </span></td>
+    <td class="c-state"><button type="button" class="state-btn${disabled ? ' off' : ''}" data-lb-active="${uid}" role="switch" aria-checked="${!disabled}" title="${disabled ? '点击启用' : '点击禁用'}">${disabled ? '停用' : '启用'}</button></td>
+  </tr>`;
+}
+
+function bindLoreRowEvents() {
+  $$('[data-lb-select]').forEach((el) => {
+    el.onchange = () => {
+      const uid = Number(el.dataset.lbSelect);
+      if (el.checked) lore.selected.add(uid); else lore.selected.delete(uid);
+      renderLoreEntries();
+    };
+  });
+  $$('[data-lb-open]').forEach((el) => {
+    el.onclick = () => openLoreEditor(lore.entries.find((e) => e.uid === Number(el.dataset.lbOpen)));
+  });
+  $$('[data-lb-mode]').forEach((el) => {
+    el.onclick = () => toggleLoreFlag(Number(el.dataset.lbMode), 'constant');
+  });
+  $$('[data-lb-active]').forEach((el) => {
+    el.onclick = () => toggleLoreFlag(Number(el.dataset.lbActive), 'disable');
+  });
+  $$('[data-lb-move]').forEach((el) => {
+    el.onclick = () => moveLoreEntry(Number(el.dataset.lbUid), Number(el.dataset.lbMove));
+  });
 }
 
 function renderLoreEntries() {
   const items = filteredLoreEntries();
-  $('#lb-count').textContent = `${items.length} / ${lore.entries.length} 条 · 已选 ${lore.selected.size}`;
+  $('#lb-count').textContent = lore.loading
+    ? '正在载入…'
+    : `${items.length} / ${lore.entries.length} 条 · 已选 ${lore.selected.size}`;
   $('#lb-select-all').checked = items.length > 0 && items.every((e) => lore.selected.has(e.uid));
   $('#lb-select-all').indeterminate = items.some((e) => lore.selected.has(e.uid)) && !$('#lb-select-all').checked;
-  $('#lb-entries').innerHTML = items.map(({ uid, raw }) => `<div class="lb-entry${raw.disable ? ' lb-disabled' : ''}">
-    <label><input type="checkbox" data-lb-select="${uid}" aria-label="选择条目 ${uid}" ${lore.selected.has(uid) ? 'checked' : ''}></label>
-    <button class="btn mini ${raw.constant ? 'lb-constant' : 'lb-keyword'}" data-lb-mode="${uid}" title="切换常驻 / 关键词触发">${raw.constant ? '● 常驻' : '● 关键词'}</button>
-    <button class="btn ghost lb-entry-open" data-lb-open="${uid}">${esc(raw.comment || `条目 #${uid}`)}<small>#${uid} · order ${esc(raw.order ?? 100)} · ${esc(raw.group || '无分组')} · ${raw.disable ? '禁用' : '启用'}</small><small>${esc((raw.key || []).join(' / '))}</small></button>
-    <button class="btn mini" data-lb-active="${uid}">${raw.disable ? '启用' : '禁用'}</button>
-  </div>`).join('') || '<p class="empty">没有条目，或筛选条件无匹配。可新建或导入原生世界书 JSON。</p>';
-  $$('[data-lb-select]').forEach((el) => { el.onchange = () => { const uid = Number(el.dataset.lbSelect); el.checked ? lore.selected.add(uid) : lore.selected.delete(uid); renderLoreEntries(); }; });
-  $$('[data-lb-open]').forEach((el) => { el.onclick = () => openLoreEditor(lore.entries.find((e) => e.uid === Number(el.dataset.lbOpen))); });
-  for (const [attr, field] of [['mode', 'constant'], ['active', 'disable']]) {
-    $$(`[data-lb-${attr}]`).forEach((el) => { el.onclick = () => loreAction(async () => {
-      if (!discardLore()) return;
-      const entry = lore.entries.find((e) => e.uid === Number(el.dataset[attr === 'mode' ? 'lbMode' : 'lbActive']));
-      await loreApi('entry', { bookId: lore.bookId, entry: { uid: entry.uid, [field]: !entry.raw[field] } });
-      closeLoreEditor(); await loadLoreBook(lore.bookId);
-    }); });
+
+  let body;
+  if (lore.loading) {
+    body = Array.from({ length: 5 }, () => '<tr class="lb-row lb-skeleton"><td colspan="7"><span class="skel-line"></span></td></tr>').join('');
+  } else if (!lore.bookId) {
+    body = `<tr class="lb-empty-row"><td colspan="7"><p class="lb-empty">${lore.books.length ? '从左侧选择一本世界书。' : '还没有世界书。点击左上角 ＋ 新建，或从 JSON 导入一本。'}</p></td></tr>`;
+  } else if (!items.length) {
+    const filtered = lore.entries.length > 0;
+    body = `<tr class="lb-empty-row"><td colspan="7"><p class="lb-empty">${filtered ? '没有匹配的条目。清空搜索或筛选条件试试。' : '这本书还是空的。点击「＋ 新条目」开始，或导入原生 JSON。'}</p></td></tr>`;
+  } else {
+    body = items.map(loreRowMarkup).join('');
   }
+
+  $('#lb-entries').innerHTML = body;
+  if (!lore.loading) bindLoreRowEvents();
+  updateLoreControls();
+}
+
+function loreStats(entries) {
+  return {
+    entries: entries.length,
+    active: entries.filter((e) => !e.raw?.disable).length,
+    constant: entries.filter((e) => e.raw?.constant).length,
+  };
+}
+
+// 列表接口只给条目总数；启用数按书惰性读取一次并缓存，避免每次渲染都 N+1。
+async function prefetchBookStats(books) {
+  for (const book of books) {
+    if (Number(book.entry_count) === 0 && !lore.stats.has(book.id)) {
+      lore.stats.set(book.id, { entries: 0, active: 0, constant: 0 });
+    }
+  }
+  const missing = books.filter((b) => b.id !== lore.bookId && !lore.stats.has(b.id) && Number(b.entry_count) > 0);
+  for (let i = 0; i < missing.length; i += 3) {
+    await Promise.all(missing.slice(i, i + 3).map(async (book) => {
+      try {
+        const result = await loreApi('get', undefined, `?bookId=${encodeURIComponent(book.id)}`);
+        const entries = result.entries ?? [];
+        lore.stats.set(book.id, loreStats(Array.isArray(entries) ? entries : []));
+      } catch {
+        // 统计失败不影响主流程；列表仍显示条目总数。
+      }
+    }));
+  }
+}
+
+function renderLoreBookList() {
+  $('#lb-books-count').textContent = lore.books.length
+    ? `${lore.books.length} 本 · ${lore.books.reduce((n, b) => n + (Number(b.entry_count) || 0), 0)} 条条目`
+    : '还没有世界书';
+  $('#lb-books').innerHTML = lore.books.map((b) => {
+    const stat = lore.stats.get(b.id);
+    const entries = stat ? stat.entries : (Number(b.entry_count) || 0);
+    const state = b.enabled === false ? '整本停用' : '已启用';
+    const active = stat ? `${stat.active} 启用` : (entries ? '…' : '0 启用');
+    return `<button class="lb-book${b.id === lore.bookId ? ' is-active' : ''}" data-lb-book="${esc(b.id)}"${b.id === lore.bookId ? ' aria-current="true"' : ''} title="${esc(b.name)} · ${state}${stat ? ` · ${stat.constant} 常驻` : ''}">
+      <span class="lb-book-name">${esc(b.name)}</span>
+      <span class="lb-book-state ${b.enabled === false ? '' : 'on'}" title="${state}"></span>
+      <span class="lb-book-stats">${entries} 条 · ${active}</span>
+    </button>`;
+  }).join('') || '<p class="lb-book-empty">还没有世界书。<br>新建一本，或导入原生 JSON。</p>';
+  $$('[data-lb-book]').forEach((el) => {
+    el.onclick = () => selectLoreBook(Number(el.dataset.lbBook));
+  });
+}
+
+function renderLoreHeader() {
+  const book = currentLoreBook();
+  const enabled = lore.entries.filter((e) => !e.raw?.disable).length;
+  const constant = lore.entries.filter((e) => e.raw?.constant).length;
+  $('#lb-book-title').textContent = book?.name ?? '未选择世界书';
+  $('#lb-book-meta').textContent = book
+    ? `${lore.entries.length} 条条目 · ${enabled} 启用 · ${constant} 常驻`
+    : '选择或新建一本世界书';
+  $('#lb-enabled').checked = book ? book.enabled !== false : false;
+  $('#lb-enabled').disabled = !book || lore.busy;
   updateLoreControls();
 }
 
 async function loadLoreBook(bookId) {
   const generation = ++lore.load;
-  lore.bookId = bookId; lore.entries = []; lore.selected.clear(); closeLoreEditor(); renderLoreEntries();
-  if (bookId == null) { $('#lb-enabled').checked = false; return; }
+  lore.bookId = bookId;
+  lore.entries = [];
+  lore.selected.clear();
+  lore.loading = bookId != null;
+  closeLoreEditor();
+  renderLoreHeader();
+  renderLoreEntries();
+  if (bookId == null) {
+    setLoreStatus(lore.books.length ? '选择左侧世界书开始编辑。' : '尚无世界书，请新建或导入 JSON。');
+    return;
+  }
   try {
     const result = await loreApi('get', undefined, `?bookId=${encodeURIComponent(bookId)}`);
     if (generation !== lore.load) return;
     const entries = result.entries ?? result.book?.entries ?? [];
     lore.entries = Array.isArray(entries) ? entries : Object.entries(entries).map(([uid, raw]) => ({ uid: Number(uid), raw }));
-    $('#lb-enabled').checked = result.book.enabled !== false;
-    $('#lb-status').textContent = `已载入「${result.book.name}」`;
+    lore.stats.set(bookId, loreStats(lore.entries));
+    const listed = lore.books.find((b) => b.id === bookId);
+    if (listed) listed.entry_count = lore.entries.length;
+    lore.loading = false;
+    renderLoreHeader();
     renderLoreEntries();
+    renderLoreBookList();
+    setLoreStatus(`已载入「${result.book.name}」`, 'ok');
   } catch (e) {
-    if (generation === lore.load) { lore.bookId = null; $('#lb-status').textContent = `载入失败：${e.message}`; updateLoreControls(); }
+    if (generation === lore.load) {
+      lore.bookId = null;
+      lore.loading = false;
+      renderLoreHeader();
+      renderLoreEntries();
+      setLoreStatus(`载入失败：${e.message}`, 'err');
+    }
     throw e;
   }
 }
 
 async function reloadLoreBooks(preferred = lore.bookId) {
-  const result = await loreApi('list'); lore.books = result.books || [];
+  const result = await loreApi('list');
+  lore.books = result.books || [];
   const chosen = lore.books.find((b) => String(b.id) === String(preferred)) || lore.books[0];
-  $('#lb-book').innerHTML = lore.books.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}${b.enabled === false ? '（禁用）' : ''} · ${esc(b.entry_count ?? 0)} 条</option>`).join('') || '<option value="">尚无世界书</option>';
-  $('#lb-book').value = chosen ? String(chosen.id) : '';
   await loadLoreBook(chosen?.id ?? null);
+  await prefetchBookStats(lore.books);
+  renderLoreBookList();
 }
 
-async function renderLorebooks() {
-  if (!discardLore() || (lore.settingsDirty && !confirm('全局设置未保存，确定重新载入？'))) return;
+async function selectLoreBook(bookId) {
+  setBooksDrawer(false);
+  if (lore.busy || bookId === lore.bookId) return;
+  if (!discardLore()) return;
   await loreAction(async () => {
-    $('#lb-status').textContent = '正在载入世界书…';
-    await reloadLoreBooks();
-    const result = await loreApi('settings');
-    fillLoreFields(LB_SETTINGS, result.settings || {}, 'lb-setting-'); lore.settingsDirty = false;
-    if (!lore.books.length) $('#lb-status').textContent = '尚无世界书，请新建或导入 JSON。';
+    await loadLoreBook(bookId);
+    renderLoreBookList();
   });
 }
+
+async function toggleLoreFlag(uid, field) {
+  const entry = lore.entries.find((e) => e.uid === uid);
+  if (!entry) return;
+  await loreAction(async () => {
+    if (!discardLore()) return;
+    await loreApi('entry', { bookId: lore.bookId, entry: { uid, [field]: !entry.raw[field] } });
+    closeLoreEditor();
+    await loadLoreBook(lore.bookId);
+  });
+}
+
+async function moveLoreEntry(uid, direction) {
+  const items = filteredLoreEntries();
+  const index = items.findIndex((e) => e.uid === uid);
+  const target = index + direction;
+  if (index < 0 || target < 0 || target >= items.length) return;
+  const neighbor = items[target];
+  const base = Number.isFinite(Number(neighbor.raw.order)) ? Number(neighbor.raw.order) : 100;
+  const desc = $('#lb-sort').value !== 'asc';
+  const order = desc === (direction < 0) ? base + 1 : base - 1;
+  await loreAction(async () => {
+    await loreApi('entry', { bookId: lore.bookId, entry: { uid, order } });
+    await loadLoreBook(lore.bookId);
+  });
+}
+
+// ------------------------------------------------------------ 书级操作
+
+function showNewBookForm(show) {
+  $('#lb-book-new').hidden = !show;
+  if (show) {
+    $('#lb-book-new-name').value = '';
+    $('#lb-book-new-name').focus?.();
+  }
+}
+
+function showRenameForm(show) {
+  const book = currentLoreBook();
+  $('#lb-rename-row').hidden = !show;
+  if (show && book) {
+    $('#lb-rename-input').value = book.name;
+    $('#lb-rename-input').focus?.();
+    $('#lb-rename-input').select?.();
+  }
+}
+
+async function createLoreBook() {
+  const name = $('#lb-book-new-name').value.trim();
+  if (!name) { $('#lb-book-new-name').focus?.(); return; }
+  await loreAction(async () => {
+    const result = await loreApi('create', { name, enabled: true });
+    showNewBookForm(false);
+    await reloadLoreBooks(result.book.id);
+    toast(`已创建「${name}」`);
+  });
+}
+
+// ------------------------------------------------------------ 导入 / 导出 / 设置
+
+function closeSettings() {
+  if (lore.settingsDirty && !confirm('世界书设置尚未保存，确定关闭？')) return;
+  lore.settingsDirty = false;
+  closeDialog('lb-settings-dialog');
+}
+
+function resetImport() {
+  lore.pendingImport = null;
+  $('#lb-import-name').value = '';
+  $('#lb-import-preview').innerHTML = '<p class="hint">尚未选择文件。</p>';
+  $('#lb-file').value = '';
+  updateLoreControls();
+}
+
+function sanitizeFileName(name) {
+  return String(name || 'lorebook').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/^\.+/, '') || 'lorebook';
+}
+
+function exportFileName() {
+  const typed = $('#lb-export-name').value.trim() || `${currentLoreBook()?.name ?? 'lorebook'}.json`;
+  const base = sanitizeFileName(typed.replace(/\.json$/i, ''));
+  return `${base}.json`;
+}
+
+// ------------------------------------------------------------ 绑定
 
 function bindLorebooks() {
-  $('#lb-entry-fields').innerHTML = LB_FIELDS.map((f) => loreFieldMarkup(f, 'lb-field-')).join('');
+  $('#lb-entry-fields').innerHTML = LB_FIELDS.filter((f) => f[5] === 'basic').map((f) => loreFieldMarkup(f, 'lb-field-')).join('');
+  $('#lb-entry-advanced').innerHTML = LB_FIELDS.filter((f) => f[5] === 'advanced').map((f) => loreFieldMarkup(f, 'lb-field-')).join('');
   $('#lb-settings-fields').innerHTML = LB_SETTINGS.map((f) => loreFieldMarkup(f, 'lb-setting-')).join('');
+
   for (const field of LB_FIELDS) {
-    const el = $('#lb-field-' + field[0]);
-    el.onchange = () => {
-      try {
-        const raw = parseLoreRaw(); raw[field[0]] = readLoreField(field, 'lb-field-');
-        $('#lb-raw').value = stringifyLoreJson(raw, 2); trackLoreChanges(raw); lore.invalid.delete(field[0]);
-        $('#lb-json-error').textContent = lore.invalid.size ? '请修正无效字段，或重新编辑 JSON。' : '';
-      }
-      catch (e) { lore.invalid.add(field[0]); $('#lb-json-error').textContent = e.message; }
-    };
+    loreById('lb-field-' + field[0]).onchange = () => applyLoreField(field);
   }
-  for (const [key] of LB_SETTINGS) $('#lb-setting-' + key).onchange = () => { lore.settingsDirty = true; };
-  $('#lb-raw').oninput = syncLoreRaw;
-  for (const id of ['q', 'group']) $('#lb-' + id).oninput = renderLoreEntries;
-  for (const id of ['active', 'sort']) $('#lb-' + id).onchange = renderLoreEntries;
-  $('#lb-select-all').onchange = () => { const checked = $('#lb-select-all').checked; for (const e of filteredLoreEntries()) checked ? lore.selected.add(e.uid) : lore.selected.delete(e.uid); renderLoreEntries(); };
+  for (const [key] of LB_SETTINGS) {
+    loreById('lb-setting-' + key).onchange = () => { lore.settingsDirty = true; };
+  }
+
+  $('#lb-raw').oninput = () => { syncLoreRaw(); updateDirtyBadge(); };
+  for (const id of ['lb-q', 'lb-group']) loreById(id).oninput = renderLoreEntries;
+  for (const id of ['lb-active', 'lb-sort']) loreById(id).onchange = renderLoreEntries;
+
+  $('#lb-select-all').onchange = () => {
+    const checked = $('#lb-select-all').checked;
+    for (const entry of filteredLoreEntries()) {
+      if (checked) lore.selected.add(entry.uid); else lore.selected.delete(entry.uid);
+    }
+    renderLoreEntries();
+  };
+
   $('#lb-new').onclick = () => { if (lore.bookId != null) openLoreEditor(null); };
   $('#lb-cancel').onclick = () => { if (!lore.busy && discardLore()) closeLoreEditor(); };
-  $('#lb-book').onchange = () => loreAction(async () => {
-    const id = Number($('#lb-book').value);
-    if (!discardLore()) { $('#lb-book').value = String(lore.bookId); return; }
-    await loadLoreBook(id);
+  $('#lb-close').onclick = () => { if (!lore.busy && discardLore()) closeLoreEditor(); };
+
+  $('#lb-book-new-save').onclick = createLoreBook;
+  $('#lb-book-new-cancel').onclick = () => showNewBookForm(false);
+  $('#lb-book-new-name').onkeydown = (e) => { if (e.key === 'Enter') createLoreBook(); };
+  $('#lb-create').onclick = () => { if (!lore.busy) showNewBookForm($('#lb-book-new').hidden); };
+
+  $('#lb-rename').onclick = () => { if (!lore.busy && lore.bookId != null) showRenameForm(true); };
+  $('#lb-rename-cancel').onclick = () => showRenameForm(false);
+  $('#lb-rename-save').onclick = () => loreAction(async () => {
+    const name = $('#lb-rename-input').value.trim();
+    if (!name) throw new Error('世界书名称不能为空');
+    await loreApi('update', { bookId: lore.bookId, name });
+    showRenameForm(false);
+    await reloadLoreBooks(lore.bookId);
+    toast('已重命名');
   });
-  $('#lb-create').onclick = () => loreAction(async () => {
-    const name = prompt('新世界书名称'); if (!name?.trim() || !discardLore()) return;
-    const result = await loreApi('create', { name: name.trim(), enabled: true }); await reloadLoreBooks(result.book.id);
-  });
-  $('#lb-rename').onclick = () => loreAction(async () => {
-    const name = prompt('世界书新名称', lore.books.find((b) => b.id === lore.bookId)?.name || '');
-    if (!name?.trim() || !discardLore()) return;
-    await loreApi('update', { bookId: lore.bookId, name: name.trim() }); await reloadLoreBooks();
-  });
+
   $('#lb-enabled').onchange = () => loreAction(async () => {
+    const enabled = $('#lb-enabled').checked;
     try {
-      const enabled = $('#lb-enabled').checked;
       await loreApi('update', { bookId: lore.bookId, enabled });
-      const book = lore.books.find((b) => b.id === lore.bookId);
-      if (book) {
-        book.enabled = enabled;
-        const option = [...$('#lb-book').options].find((o) => o.value === String(book.id));
-        if (option) option.textContent = `${book.name}${enabled ? '' : '（禁用）'} · ${book.entry_count ?? 0} 条`;
-      }
+      const book = currentLoreBook();
+      if (book) book.enabled = enabled;
+      renderLoreBookList();
+      renderLoreHeader();
+      setLoreStatus(enabled ? `已启用「${book?.name ?? ''}」` : `已停用「${book?.name ?? ''}」`, 'ok');
+    } catch (e) {
+      $('#lb-enabled').checked = !enabled;
+      throw e;
     }
-    catch (e) { $('#lb-enabled').checked = !$('#lb-enabled').checked; throw e; }
   });
+
   $('#lb-delete').onclick = () => loreAction(async () => {
-    if (!confirm('永久删除当前世界书及其全部条目？') || !discardLore()) return;
-    await loreApi('delete', { bookId: lore.bookId }); await reloadLoreBooks(null);
+    const book = currentLoreBook();
+    if (!book || !discardLore()) return;
+    if (!confirm(`永久删除世界书「${book.name}」及其全部条目？`)) return;
+    await loreApi('delete', { bookId: book.id });
+    await reloadLoreBooks(null);
+    toast(`已删除「${book.name}」`);
   });
+
   $('#lb-save').onclick = () => loreAction(async () => {
     const raw = parseLoreRaw();
-    if (lore.invalid.size) throw new Error('请先修正无效字段，或重新编辑 JSON。');
+    if (lore.invalid.size) throw new Error(`无效字段：${[...lore.invalid].join(', ')}`);
     trackLoreChanges(raw);
-    // The API deep-merges patches. Only explicit edits are sent, never display defaults.
+    // API 递归合并补丁：只发送显式编辑过的字段，绝不把展示默认值写进原生 JSON。
     if (lore.editing != null && !lore.changed.size) { closeLoreEditor(); return; }
     const original = parseLoreJson(lore.initial);
     function checkRemoved(before, after) {
@@ -1247,50 +1667,152 @@ function bindLorebooks() {
     const entry = lore.editing == null ? raw : Object.fromEntries([...lore.changed].map((key) => [key, raw[key]]));
     if (lore.editing != null) entry.uid = lore.editing;
     const entryText = stringifyLoreJson(entry);
-    // Older clients/hosts still support object patches. Use text when the patch
-    // contains unsafe native integers, otherwise keep the established API shape.
+    // 旧客户端/宿主仍接受对象补丁；含非安全整数时必须走文本通道。
     let hasLargeInteger = false;
     JSON.stringify(entry, (key, value) => {
       if (typeof value === 'bigint') { hasLargeInteger = true; return null; }
       return value;
     });
     await loreApi('entry', { bookId: lore.bookId, ...(hasLargeInteger ? { entryText } : { entry }) });
-    closeLoreEditor(); await loadLoreBook(lore.bookId); toast('条目已保存');
+    closeLoreEditor();
+    await loadLoreBook(lore.bookId);
+    toast('条目已保存');
   });
+
   $('#lb-entry-delete').onclick = () => loreAction(async () => {
-    if (lore.editing == null || !confirm(`永久删除条目 #${lore.editing}？`)) return;
-    await loreApi('entry-delete', { bookId: lore.bookId, uid: lore.editing }); closeLoreEditor(); await loadLoreBook(lore.bookId);
+    if (lore.editing == null) return;
+    if (!confirm(`永久删除条目 #${lore.editing}？`)) return;
+    const uid = lore.editing;
+    await loreApi('entry-delete', { bookId: lore.bookId, uid });
+    closeLoreEditor();
+    await loadLoreBook(lore.bookId);
+    toast(`已删除条目 #${uid}`);
   });
-  for (const [id, enabled] of [['batch-on', true], ['batch-off', false]]) $('#lb-' + id).onclick = () => loreAction(async () => {
-    if (!lore.selected.size || !discardLore()) return;
-    await loreApi('selection', { bookId: lore.bookId, uids: [...lore.selected], enabled }); await loadLoreBook(lore.bookId);
+
+  for (const [id, enabled] of [['lb-batch-on', true], ['lb-batch-off', false]]) {
+    loreById(id).onclick = () => loreAction(async () => {
+      if (!lore.selected.size || !discardLore()) return;
+      await loreApi('selection', { bookId: lore.bookId, uids: [...lore.selected], enabled });
+      await loadLoreBook(lore.bookId);
+      toast(enabled ? '已批量启用' : '已批量禁用');
+    });
+  }
+
+  // 导入
+  $('#lb-import').onclick = () => { if (!lore.busy) { resetImport(); openDialog('lb-import-dialog'); } };
+  $('#lb-import-close').onclick = () => closeDialog('lb-import-dialog');
+  $('#lb-import-cancel').onclick = () => { closeDialog('lb-import-dialog'); resetImport(); };
+  $('#lb-file').onchange = () => loreAction(async () => {
+    const file = $('#lb-file').files?.[0];
+    if (!file) return;
+    const dataText = await file.text();
+    const fail = (message) => {
+      $('#lb-import-preview').innerHTML = `<p class="err">${esc(message)}</p>`;
+      throw new Error(message);
+    };
+    let data;
+    try { data = JSON.parse(dataText); }
+    catch (e) { fail(`文件不是合法 JSON：${e.message}`); }
+    if (!data || typeof data !== 'object' || Array.isArray(data)
+      || !data.entries || typeof data.entries !== 'object' || Array.isArray(data.entries)) {
+      fail('请选择原生 SillyTavern 世界书 JSON（顶层 entries 对象）');
+    }
+    const count = Object.keys(data.entries).length;
+    lore.pendingImport = { dataText, fileName: file.name };
+    $('#lb-import-name').value = file.name.replace(/\.json$/i, '');
+    const samples = Object.values(data.entries).slice(0, 4)
+      .map((e) => e?.comment || (Array.isArray(e?.key) ? e.key[0] : ''))
+      .filter(Boolean).map((s) => esc(s));
+    $('#lb-import-preview').innerHTML = `<p class="ok">已读取 <strong>${count}</strong> 条条目，导入后新建一本世界书。</p>
+      <dl><dt>文件</dt><dd>${esc(file.name)}</dd><dt>条目</dt><dd>${count}</dd>${samples.length ? `<dt>示例</dt><dd>${samples.join(' · ')}</dd>` : ''}</dl>`;
+    updateLoreControls();
   });
+  $('#lb-import-confirm').onclick = () => loreAction(async () => {
+    const pending = lore.pendingImport;
+    if (!pending) return;
+    const name = $('#lb-import-name').value.trim() || pending.fileName.replace(/\.json$/i, '') || '未命名世界书';
+    const result = await loreApi('import', { name, dataText: pending.dataText });
+    closeDialog('lb-import-dialog');
+    resetImport();
+    await reloadLoreBooks(result.book.id);
+    toast(`已导入「${name}」`);
+  });
+
+  // 导出
+  $('#lb-export').onclick = () => {
+    if (lore.busy || lore.bookId == null) return;
+    $('#lb-export-name').value = `${sanitizeFileName(currentLoreBook()?.name)}.json`;
+    $('#lb-export-meta').textContent = `${lore.entries.length} 条条目 · 书级扩展字段一并导出`;
+    openDialog('lb-export-dialog');
+  };
+  $('#lb-export-close').onclick = () => closeDialog('lb-export-dialog');
+  $('#lb-export-cancel').onclick = () => closeDialog('lb-export-dialog');
+  $('#lb-export-download').onclick = () => loreAction(async () => {
+    const result = await loreApi('export', undefined, `?bookId=${encodeURIComponent(lore.bookId)}`);
+    const dataText = result.dataText ?? JSON.stringify(result.data, null, 2);
+    const blob = new Blob([dataText], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = exportFileName();
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    closeDialog('lb-export-dialog');
+    toast('已导出 JSON');
+  });
+  $('#lb-export-copy').onclick = () => loreAction(async () => {
+    const result = await loreApi('export', undefined, `?bookId=${encodeURIComponent(lore.bookId)}`);
+    const dataText = result.dataText ?? JSON.stringify(result.data, null, 2);
+    if (typeof navigator === 'undefined' || !navigator.clipboard) throw new Error('当前浏览器不支持剪贴板 API');
+    await navigator.clipboard.writeText(dataText);
+    toast('JSON 已复制到剪贴板');
+  });
+
+  // 全局设置
+  $('#lb-settings-open').onclick = () => { if (!lore.busy) openDialog('lb-settings-dialog'); };
+  $('#lb-settings-close').onclick = closeSettings;
+  $('#lb-settings-cancel').onclick = closeSettings;
   $('#lb-settings-save').onclick = () => loreAction(async () => {
     const patch = Object.fromEntries(LB_SETTINGS.map((field) => [field[0], readLoreField(field, 'lb-setting-')]));
     if (Object.values(patch).some((v) => typeof v === 'number' && v < 0)) throw new Error('扫描、递归和预算不能为负数');
-    const result = await loreApi('settings', patch); fillLoreFields(LB_SETTINGS, result.settings || patch, 'lb-setting-'); lore.settingsDirty = false; toast('世界书设置已保存');
+    const result = await loreApi('settings', patch);
+    fillLoreFields(LB_SETTINGS, result.settings || patch, 'lb-setting-');
+    lore.settingsDirty = false;
+    closeDialog('lb-settings-dialog');
+    toast('世界书设置已保存');
   });
-  $('#lb-import').onclick = () => { $('#lb-file').value = ''; $('#lb-file').click(); };
-  $('#lb-file').onchange = () => loreAction(async () => {
-    const file = $('#lb-file').files?.[0]; if (!file || !discardLore()) return;
-    const dataText = await file.text();
-    const data = JSON.parse(dataText); // Shape validation only; never reserialize this object.
-    if (!data || typeof data !== 'object' || Array.isArray(data) || !data.entries || typeof data.entries !== 'object' || Array.isArray(data.entries)) throw new Error('请选择原生 SillyTavern 世界书 JSON（entries 对象）');
-    const name = prompt('导入为新世界书，名称：', file.name.replace(/\.json$/i, ''));
-    if (!name?.trim()) return;
-    const result = await loreApi('import', { name: name.trim(), dataText }); await reloadLoreBooks(result.book.id); toast('世界书已导入');
+
+  // 抽屉
+  $('#lb-books-toggle').onclick = () => setBooksDrawer(!lore.booksOpen);
+  $('#lb-books-scrim').onclick = () => setBooksDrawer(false);
+  window.addEventListener('beforeunload', (e) => {
+    if (loreDirty() || lore.settingsDirty) { e.preventDefault(); e.returnValue = ''; }
   });
-  $('#lb-export').onclick = () => loreAction(async () => {
-    if (loreDirty() && !confirm('导出仅包含已保存内容，继续？')) return;
-    const result = await loreApi('export', undefined, `?bookId=${encodeURIComponent(lore.bookId)}`);
-    const blob = new Blob([result.dataText ?? JSON.stringify(result.data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob); const link = document.createElement('a');
-    link.href = url; link.download = (lore.books.find((b) => b.id === lore.bookId)?.name || 'lorebook').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_') + '.json';
-    document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-  });
-  window.addEventListener('beforeunload', (e) => { if (loreDirty() || lore.settingsDirty) { e.preventDefault(); e.returnValue = ''; } });
+
   updateLoreControls();
 }
+
+async function renderLorebooks() {
+  if (!discardLore()) return;
+  await loreAction(async () => {
+    lore.loading = true;
+    setLoreStatus('正在载入世界书…');
+    renderLoreEntries();
+    try {
+      await reloadLoreBooks();
+      const result = await loreApi('settings');
+      fillLoreFields(LB_SETTINGS, result.settings || {}, 'lb-setting-');
+      lore.settingsDirty = false;
+      if (lore.books.length) setLoreStatus(`已载入「${currentLoreBook()?.name ?? ''}」`, 'ok');
+    } finally {
+      lore.loading = false;
+      renderLoreEntries();
+    }
+  });
+}
+
 
 // ============================================================ 刷新调度
 
@@ -1923,6 +2445,13 @@ function scheduleAutoRefresh() {
 
 function bind() {
   $$('.tab').forEach((t) => { t.onclick = () => switchView(t.dataset.view); });
+  $('#nav-toggle').onclick = () => setNavOpen(!document.body.classList.contains('nav-open'));
+  $('#nav-scrim').onclick = () => setNavOpen(false);
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    setNavOpen(false);
+    if (lore.booksOpen) setBooksDrawer(false);
+  });
   $('#refresh-btn').onclick = refresh;
   $('#autorefresh').onchange = (e) => { state.autorefresh = e.target.checked; };
 

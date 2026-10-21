@@ -8,40 +8,101 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🐭</text></svg>">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="logo">🐭</span>
-      <div>
-        <h1>RUAJI Bridge v2</h1>
-        <p class="sub" id="brand-sub">运维与调试控制台</p>
+  <svg class="icon-sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-dashboard" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="3" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="7" width="5" height="7" rx="1"/></symbol>
+    <symbol id="i-host" viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="4" rx="1.2"/><rect x="2" y="9.5" width="12" height="4" rx="1.2"/><path d="M4.5 4.5h.01M4.5 11.5h.01"/></symbol>
+    <symbol id="i-portal" viewBox="0 0 16 16"><rect x="2" y="2" width="5" height="6" rx="1"/><rect x="9" y="2" width="5" height="6" rx="1"/><rect x="2" y="10" width="12" height="4" rx="1"/></symbol>
+    <symbol id="i-traces" viewBox="0 0 16 16"><path d="M2 12l3.5-4 3 2.5L14 4"/><path d="M10.5 4H14v3.5"/></symbol>
+    <symbol id="i-sandbox" viewBox="0 0 16 16"><path d="M6 2h4M7 2v4.2L3.6 12a1.4 1.4 0 0 0 1.2 2h6.4a1.4 1.4 0 0 0 1.2-2L9 6.2V2"/><path d="M5 10.5h6"/></symbol>
+    <symbol id="i-shadow" viewBox="0 0 16 16"><circle cx="6" cy="8" r="3.6"/><circle cx="10" cy="8" r="3.6"/></symbol>
+    <symbol id="i-affection" viewBox="0 0 16 16"><path d="M8 13.2S2.4 9.8 2.4 5.9A2.9 2.9 0 0 1 8 4.4a2.9 2.9 0 0 1 5.6 1.5c0 3.9-5.6 7.3-5.6 7.3Z"/></symbol>
+    <symbol id="i-portrayal" viewBox="0 0 16 16"><circle cx="8" cy="5.2" r="2.7"/><path d="M2.8 14a5.2 5.2 0 0 1 10.4 0"/></symbol>
+    <symbol id="i-memes" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="1.4"/><circle cx="5.8" cy="6.4" r="1.1"/><path d="M3 11.4l3.2-3 2.3 2.2 2-1.9 2.5 2.7"/></symbol>
+    <symbol id="i-lorebook" viewBox="0 0 16 16"><path d="M3 2.5h7.5A2.5 2.5 0 0 1 13 5v8.5H5A2 2 0 0 1 3 11.5Z"/><path d="M5 2.5v11"/><path d="M7.5 5.5h3M7.5 8h3"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 16 16"><path d="M3 4.5h10M3 8h10M3 11.5h10"/><circle cx="6" cy="4.5" r="1.4"/><circle cx="10" cy="8" r="1.4"/><circle cx="7.5" cy="11.5" r="1.4"/></symbol>
+  </svg>
+
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="主导航">
+      <div class="brand">
+        <span class="logo" aria-hidden="true">🐭</span>
+        <div class="brand-text">
+          <strong>RUAJI Bridge</strong>
+          <span class="brand-version">v2 · 运维控制台</span>
+        </div>
       </div>
-    </div>
-    <div class="topbar-right">
-      <span class="pill" id="mode-pill">—</span>
-      <span class="pill ghost" id="uptime-pill">—</span>
-      <label class="autorefresh">
-        <input type="checkbox" id="autorefresh" checked>
-        <span>自动刷新</span>
-      </label>
-      <button class="btn" id="refresh-btn">刷新</button>
-    </div>
-  </header>
 
-  <nav class="tabs" id="tabs">
-    <button class="tab active" data-view="overview">系统大盘</button>
-    <button class="tab" data-view="host">统一宿主 & 模型池</button>
-    <button class="tab" data-view="plugins-portal">插件聚合门户</button>
-    <button class="tab" data-view="traces">全链路追踪</button>
-    <button class="tab" data-view="sandbox">离线沙箱</button>
-    <button class="tab" data-view="shadow">影子对比</button>
-    <button class="tab" data-view="affection">好感度</button>
-    <button class="tab" data-view="portrayal">群友画像</button>
-    <button class="tab" data-view="memes">表情包</button>
-    <button class="tab" data-view="lorebooks">世界书</button>
-    <button class="tab" data-view="settings">客制化设置</button>
-  </nav>
+      <nav class="tabs" id="tabs">
+        <p class="nav-group">运行</p>
+        <button class="tab active" data-view="overview" title="组件健康、指标与熔断">
+          <svg class="nav-icon"><use href="#i-dashboard"/></svg><span class="nav-label">系统大盘</span>
+        </button>
+        <button class="tab" data-view="host" title="统一宿主与模型池">
+          <svg class="nav-icon"><use href="#i-host"/></svg><span class="nav-label">统一宿主</span>
+        </button>
+        <button class="tab" data-view="plugins-portal" title="插件聚合门户">
+          <svg class="nav-icon"><use href="#i-portal"/></svg><span class="nav-label">插件门户</span>
+        </button>
+        <button class="tab" data-view="traces" title="全链路追踪">
+          <svg class="nav-icon"><use href="#i-traces"/></svg><span class="nav-label">全链路追踪</span>
+        </button>
 
-  <main id="main">
+        <p class="nav-group">调试</p>
+        <button class="tab" data-view="sandbox" title="离线沙箱">
+          <svg class="nav-icon"><use href="#i-sandbox"/></svg><span class="nav-label">离线沙箱</span>
+        </button>
+        <button class="tab" data-view="shadow" title="影子对比">
+          <svg class="nav-icon"><use href="#i-shadow"/></svg><span class="nav-label">影子对比</span>
+        </button>
+        <button class="tab" data-view="portrayal" title="群友画像">
+          <svg class="nav-icon"><use href="#i-portrayal"/></svg><span class="nav-label">群友画像</span>
+        </button>
+
+        <p class="nav-group">数据</p>
+        <button class="tab" data-view="lorebooks" title="世界书管理台">
+          <svg class="nav-icon"><use href="#i-lorebook"/></svg><span class="nav-label">世界书</span>
+        </button>
+        <button class="tab" data-view="affection" title="好感度">
+          <svg class="nav-icon"><use href="#i-affection"/></svg><span class="nav-label">好感度</span>
+        </button>
+        <button class="tab" data-view="memes" title="表情包图库">
+          <svg class="nav-icon"><use href="#i-memes"/></svg><span class="nav-label">表情包</span>
+        </button>
+
+        <p class="nav-group">配置</p>
+        <button class="tab" data-view="settings" title="客制化设置">
+          <svg class="nav-icon"><use href="#i-settings"/></svg><span class="nav-label">客制化设置</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <span class="dot healthy" aria-hidden="true"></span>
+        <span>仅监听 127.0.0.1</span>
+      </div>
+    </aside>
+
+    <div class="nav-scrim" id="nav-scrim" hidden></div>
+
+    <div class="workspace">
+      <header class="topbar">
+        <button class="icon-btn nav-toggle" id="nav-toggle" aria-label="打开导航" title="打开导航">☰</button>
+        <div class="topbar-title">
+          <h1 id="page-title">系统大盘</h1>
+          <p class="sub" id="brand-sub">运维与调试控制台</p>
+        </div>
+        <div class="topbar-right">
+          <span class="pill" id="mode-pill">—</span>
+          <span class="pill ghost" id="uptime-pill">—</span>
+          <label class="autorefresh">
+            <input type="checkbox" id="autorefresh" checked>
+            <span>自动刷新</span>
+          </label>
+          <button class="btn" id="refresh-btn">刷新</button>
+        </div>
+      </header>
+
+      <main id="main">
+
     <!-- ============ 系统大盘 ============ -->
     <section class="view active" id="view-overview">
       <h2 class="section-title">组件健康</h2>
@@ -222,61 +283,157 @@
       <div class="meme-grid" id="meme-grid"></div>
     </section>
 
-    <!-- ============ 世界书（替代社区梗库，不影响表情包图库） ============ -->
+    <!-- ============ 世界书管理台 ============ -->
     <section class="view" id="view-lorebooks">
-      <p class="note">注入范围：世界书内容只插入本轮当前 user 消息，不修改 system / developer 消息。position / depth / role 等原生字段会保留，但受当前消息锚点限制，不能按深度插入历史消息，也不会创建独立角色消息。</p>
-      <div class="toolbar">
-        <label>世界书 <select id="lb-book" aria-label="选择世界书"></select></label>
-        <label><input type="checkbox" id="lb-enabled"> 启用此书</label>
-        <button class="btn" id="lb-create">＋ 新建书</button>
-        <button class="btn" id="lb-rename">重命名</button>
-        <button class="btn" id="lb-delete">删除书</button>
-        <button class="btn" id="lb-import">导入 JSON</button>
-        <input type="file" id="lb-file" accept=".json,application/json" hidden>
-        <button class="btn" id="lb-export">导出 JSON</button>
-      </div>
-      <p class="hint" id="lb-status" role="status" aria-live="polite"></p>
-      <details class="panel">
-        <summary>全局扫描与预算设置（所有世界书共用）</summary>
-        <div class="form" id="lb-settings-fields"></div>
-        <button class="btn primary" id="lb-settings-save">保存世界书设置</button>
-      </details>
-      <div class="split lb-split">
-        <div class="panel">
-          <h3>条目</h3>
-          <div class="toolbar">
-            <input type="search" id="lb-q" aria-label="搜索条目" placeholder="搜索标题 / 关键词 / 正文…">
-            <input type="search" id="lb-group" aria-label="分组过滤" placeholder="分组包含…">
-            <select id="lb-active" aria-label="启用状态过滤"><option value="all">全部状态</option><option value="on">已启用</option><option value="off">已禁用</option></select>
-            <select id="lb-sort" aria-label="排序"><option value="desc">Order 降序</option><option value="asc">Order 升序</option></select>
+      <div class="lb-app" id="lb-app">
+
+        <!-- 左栏：书列表 -->
+        <aside class="lb-books" id="lb-books-panel" aria-label="世界书列表">
+          <div class="lb-books-head">
+            <div>
+              <h2 class="lb-books-title">世界书</h2>
+              <p class="lb-books-sub" id="lb-books-count">载入中…</p>
+            </div>
+            <button class="icon-btn" id="lb-create" title="新建世界书" aria-label="新建世界书">＋</button>
           </div>
-          <div class="toolbar">
-            <label><input type="checkbox" id="lb-select-all"> 选择筛选结果</label>
-            <span class="hint" id="lb-count"></span>
-            <button class="btn" id="lb-batch-on">批量启用</button>
-            <button class="btn" id="lb-batch-off">批量禁用</button>
-            <button class="btn primary" id="lb-new">＋ 新条目</button>
+
+          <div class="lb-book-new" id="lb-book-new" hidden>
+            <input type="text" id="lb-book-new-name" placeholder="新世界书名称" aria-label="新世界书名称">
+            <div class="lb-book-new-actions">
+              <button class="btn primary sm" id="lb-book-new-save">创建</button>
+              <button class="btn ghost sm" id="lb-book-new-cancel">取消</button>
+            </div>
           </div>
-          <div id="lb-entries"></div>
-        </div>
-        <div class="panel" id="lb-editor" hidden>
-          <div class="toolbar">
-            <h3 id="lb-editor-title">编辑条目</h3>
+
+          <div class="lb-book-list" id="lb-books" aria-label="世界书"></div>
+
+          <div class="lb-books-foot">
+            <button class="btn ghost block" id="lb-settings-open">全局扫描与预算…</button>
+            <button class="btn ghost block" id="lb-import">导入世界书 JSON…</button>
+          </div>
+        </aside>
+        <div class="lb-books-scrim" id="lb-books-scrim" hidden></div>
+
+        <!-- 中栏：条目表格 -->
+        <section class="lb-main" aria-label="条目列表">
+          <header class="lb-main-head">
+            <div class="lb-title-row">
+              <button class="icon-btn lb-books-toggle" id="lb-books-toggle" aria-label="打开世界书列表" title="世界书列表">☰</button>
+              <div class="lb-title-text">
+                <h2 id="lb-book-title">世界书</h2>
+                <p class="lb-book-meta" id="lb-book-meta">选择或新建一本世界书</p>
+              </div>
+              <label class="switch" title="整本启用 / 停用">
+                <input type="checkbox" id="lb-enabled">
+                <span class="switch-track" aria-hidden="true"></span>
+                <span class="switch-label">启用此书</span>
+              </label>
+              <div class="lb-book-actions">
+                <button class="btn ghost sm" id="lb-rename">重命名</button>
+                <button class="btn ghost sm" id="lb-export">导出</button>
+                <button class="btn ghost sm danger" id="lb-delete">删除</button>
+              </div>
+            </div>
+
+            <div class="lb-rename-row" id="lb-rename-row" hidden>
+              <input type="text" id="lb-rename-input" aria-label="世界书新名称">
+              <button class="btn primary sm" id="lb-rename-save">保存</button>
+              <button class="btn ghost sm" id="lb-rename-cancel">取消</button>
+            </div>
+
+            <p class="lb-status" id="lb-status" role="status" aria-live="polite">载入中…</p>
+          </header>
+
+          <div class="lb-toolbar">
+            <div class="lb-search">
+              <input type="search" id="lb-q" placeholder="搜索名称 / 关键词 / 正文…" aria-label="搜索条目">
+            </div>
+            <input type="search" class="lb-filter" id="lb-group" placeholder="分组" aria-label="分组过滤">
+            <select id="lb-active" aria-label="启用状态过滤">
+              <option value="all">全部状态</option>
+              <option value="on">已启用</option>
+              <option value="off">已禁用</option>
+            </select>
+            <select id="lb-sort" aria-label="排序">
+              <option value="desc">Order 降序</option>
+              <option value="asc">Order 升序</option>
+            </select>
+            <span class="lb-legend">
+              <span class="lamp blue" data-tip="蓝灯 / constant：无需关键词命中，每轮都可能注入"></span>常驻
+              <span class="lamp green" data-tip="绿灯 / key：主关键词命中后才注入"></span>关键词
+            </span>
+            <button class="btn primary sm" id="lb-new">＋ 新条目</button>
+          </div>
+
+          <div class="lb-batchbar">
+            <label class="check-inline"><input type="checkbox" id="lb-select-all"> <span>全选筛选结果</span></label>
+            <span class="hint" id="lb-count">—</span>
+            <span class="spacer"></span>
+            <button class="btn ghost sm" id="lb-batch-on">批量启用</button>
+            <button class="btn ghost sm" id="lb-batch-off">批量禁用</button>
+          </div>
+
+          <div class="lb-table-wrap">
+            <table class="lb-table" id="lb-table">
+              <thead>
+                <tr>
+                  <th class="c-check" scope="col"><span class="sr-only">选择</span></th>
+                  <th class="c-lamp" scope="col" title="蓝灯 = 常驻（constant），绿灯 = 关键词（key）">灯</th>
+                  <th class="c-name" scope="col">名称 / 注释</th>
+                  <th class="c-keys" scope="col">主关键词</th>
+                  <th class="c-group" scope="col">分组</th>
+                  <th class="c-order" scope="col">Order</th>
+                  <th class="c-state" scope="col">状态</th>
+                </tr>
+              </thead>
+              <tbody id="lb-entries">
+                <tr class="lb-empty-row"><td colspan="7"><p class="lb-empty">正在载入世界书…</p></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="lb-footnote">蓝灯常驻与绿灯关键词都受禁用、概率、分组、预算和时效约束；position / depth / role 只存储，不决定插入位置。</p>
+        </section>
+
+        <!-- 右栏：条目编辑 -->
+        <aside class="lb-editor" id="lb-editor" aria-label="条目编辑" hidden>
+          <header class="lb-editor-head">
+            <div class="lb-editor-title-text">
+              <h2 id="lb-editor-title">编辑条目</h2>
+              <p class="lb-editor-sub" id="lb-editor-sub">—</p>
+            </div>
+            <span class="lb-dirty" id="lb-dirty-badge" hidden>未保存</span>
+            <button class="icon-btn" id="lb-close" aria-label="关闭编辑面板" title="关闭（放弃未保存修改）">✕</button>
+          </header>
+
+          <div class="lb-editor-body">
+            <div class="lb-field-grid" id="lb-entry-fields"></div>
+
+            <details class="lb-advanced" id="lb-advanced">
+              <summary>
+                高级 / 原生兼容字段
+                <span class="hint">position · depth · role · outlet 等仅存储，不影响注入位置</span>
+              </summary>
+              <div class="lb-field-grid" id="lb-entry-advanced"></div>
+            </details>
+
+            <details class="lb-raw">
+              <summary>完整原生 JSON <span class="hint">未知字段原样保留</span></summary>
+              <textarea id="lb-raw" rows="14" spellcheck="false" aria-label="条目原生 JSON"></textarea>
+              <p class="lb-error" id="lb-json-error" role="alert"></p>
+            </details>
+          </div>
+
+          <footer class="lb-editor-foot">
+            <button class="btn ghost sm danger" id="lb-entry-delete">删除条目</button>
+            <span class="spacer"></span>
+            <button class="btn ghost" id="lb-cancel">取消</button>
             <button class="btn primary" id="lb-save">保存条目</button>
-            <button class="btn" id="lb-entry-delete">删除条目</button>
-            <button class="btn ghost" id="lb-cancel">关闭 / 放弃</button>
-          </div>
-          <p class="hint">主 / 次关键词每行一项（保留正则中的逗号）。蓝色 = 常驻，绿色 = 关键词触发；禁用独立控制。未设置字段仅显示默认值，不会自动写入 JSON。</p>
-          <div class="form" id="lb-entry-fields"></div>
-          <details open>
-            <summary>完整原生条目 JSON · 未知字段原样保留</summary>
-            <label class="hint" for="lb-raw">与上方控件双向同步；原生 uid 标识不可更改。扩展字段、flags、timing 均可在此编辑。保存接口合并字段，不支持删除已有属性；请显式改为空值或保留。</label>
-            <textarea id="lb-raw" rows="18" spellcheck="false"></textarea>
-            <p class="note" id="lb-json-error" role="alert"></p>
-          </details>
-        </div>
+          </footer>
+        </aside>
+
       </div>
     </section>
+
     <!-- ============ 客制化设置 ============ -->
     <section class="view" id="view-settings">
       <div class="toolbar cfg-toolbar">
@@ -515,7 +672,7 @@
 
         <div class="cfg-card">
           <div class="cfg-card-header"><span class="cfg-icon">📚</span><h3>世界书</h3></div>
-          <div class="cfg-card-body"><span class="field-desc">原社区梗库已替换为原生世界书编辑器。请在「世界书」标签页管理多本书、导入导出、全局扫描和预算设置。</span></div>
+          <div class="cfg-card-body"><span class="field-desc">原社区梗库已替换为原生世界书编辑器。请在左侧「世界书」页管理多本书、导入导出、全局扫描和预算设置。</span></div>
         </div>
 
         <!-- 卡片 3: 群友性格画像与自动化分析 (Portrayal AI) -->
@@ -893,7 +1050,91 @@
         <iframe id="plugin-portal-iframe" style="width: 100%; height: 100%; border: none; display: none;"></iframe>
       </div>
     </section>
-  </main>
+        </main>
+    </div>
+  </div>
+
+  <!-- ============ 世界书对话框 ============ -->
+  <dialog class="modal" id="lb-import-dialog" aria-labelledby="lb-import-title">
+    <div class="modal-card">
+      <header class="modal-head">
+        <div>
+          <h2 id="lb-import-title">导入世界书</h2>
+          <p class="modal-sub">SillyTavern 原生 World Info JSON · 顶层 <code>entries</code> 对象</p>
+        </div>
+        <button class="icon-btn" id="lb-import-close" aria-label="关闭">✕</button>
+      </header>
+      <div class="modal-body">
+        <label class="dropzone" id="lb-dropzone">
+          <input type="file" id="lb-file" accept=".json,application/json">
+          <span class="dropzone-icon" aria-hidden="true">⇪</span>
+          <span class="dropzone-title">选择 .json 文件</span>
+          <span class="dropzone-hint">文件不会被重新序列化；扩展字段中的大整数原样保留</span>
+        </label>
+        <label class="field" for="lb-import-name">
+          <span class="field-label">世界书名称</span>
+          <input type="text" id="lb-import-name" placeholder="导入后显示的名称">
+        </label>
+        <div class="lb-import-preview" id="lb-import-preview">
+          <p class="hint">尚未选择文件。</p>
+        </div>
+      </div>
+      <footer class="modal-foot">
+        <span class="hint">导入会新建一本书，不覆盖现有内容。</span>
+        <span class="spacer"></span>
+        <button class="btn ghost" id="lb-import-cancel">取消</button>
+        <button class="btn primary" id="lb-import-confirm" disabled>导入</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <dialog class="modal" id="lb-export-dialog" aria-labelledby="lb-export-title">
+    <div class="modal-card">
+      <header class="modal-head">
+        <div>
+          <h2 id="lb-export-title">导出世界书</h2>
+          <p class="modal-sub">原生 JSON，包含书级扩展与全部条目原始字段</p>
+        </div>
+        <button class="icon-btn" id="lb-export-close" aria-label="关闭">✕</button>
+      </header>
+      <div class="modal-body">
+        <label class="field" for="lb-export-name">
+          <span class="field-label">文件名</span>
+          <input type="text" id="lb-export-name" spellcheck="false">
+        </label>
+        <p class="hint" id="lb-export-meta">—</p>
+        <p class="hint">导出内容取自宿主 SQLite 的已保存版本；编辑器里未保存的改动不会写入文件。</p>
+      </div>
+      <footer class="modal-foot">
+        <span class="spacer"></span>
+        <button class="btn ghost" id="lb-export-cancel">取消</button>
+        <button class="btn ghost" id="lb-export-copy">复制 JSON</button>
+        <button class="btn primary" id="lb-export-download">下载 JSON</button>
+      </footer>
+    </div>
+  </dialog>
+
+  <dialog class="modal" id="lb-settings-dialog" aria-labelledby="lb-settings-title">
+    <div class="modal-card wide">
+      <header class="modal-head">
+        <div>
+          <h2 id="lb-settings-title">全局扫描与预算</h2>
+          <p class="modal-sub">所有世界书共用；预算按完整前置资料块保守估算</p>
+        </div>
+        <button class="icon-btn" id="lb-settings-close" aria-label="关闭">✕</button>
+      </header>
+      <div class="modal-body">
+        <div class="lb-field-grid" id="lb-settings-fields"></div>
+        <p class="hint">注入范围：世界书只前置到本轮当前 user 消息顶部，不修改 system / developer 消息，也不复制历史。</p>
+      </div>
+      <footer class="modal-foot">
+        <span class="spacer"></span>
+        <button class="btn ghost" id="lb-settings-cancel">取消</button>
+        <button class="btn primary" id="lb-settings-save">保存设置</button>
+      </footer>
+    </div>
+  </dialog>
+
 
   <!-- 表情包编辑模态框 -->
   <div id="meme-edit-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); z-index:1000; align-items:center; justify-content:center;">
