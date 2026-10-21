@@ -88,7 +88,7 @@ function panel(fullStartup = false) {
   const $ = (selector) => {
     const el = document.querySelector(selector); assert.ok(el, `real DOM node missing: ${selector}`); return el;
   };
-  const requests = [], errors = [], prompts = [], confirmations = [], urls = new Map(), revoked = [], intervals = [];
+  const requests = [], errors = [], prompts = [], confirmations = [], confirmTexts = [], toasts = [], urls = new Map(), revoked = [], intervals = [];
   const books = new Map([
     [1, { id: 1, name: 'Eldoria', enabled: true, raw: { vendorBook: { untouched: true } }, entries: {
       7: { uid: 7, key: ['dragon', '/a,b/i'], keysecondary: ['forest'], content: 'Ancient woods', comment: '<img src=x onerror=alert(1)>', group: 'place', order: 20, extension: { nested: [1, false, '原样'] } },
@@ -155,7 +155,7 @@ function panel(fullStartup = false) {
       revokeObjectURL(url) { revoked.push(url); },
     }, URLSearchParams, console,
     prompt: () => prompts.shift() ?? null,
-    confirm: () => confirmations.shift() ?? true,
+    confirm: (message) => { confirmTexts.push(String(message)); return confirmations.shift() ?? true; },
     setTimeout: (fn, delay) => { if (delay === 1000) fn(); return 1; }, clearTimeout() {},
     setInterval(fn) { intervals.push(fn); return intervals.length; }, clearInterval() {},
   });
@@ -165,7 +165,7 @@ function panel(fullStartup = false) {
     : app.slice(0, app.lastIndexOf('\nbind();')).replace(/export /g, '') + '\nbind();';
   vm.runInContext(script, context, { filename: 'app.js' });
   const originalToast = context.toast;
-  context.toast = (message, error) => { if (error) errors.push(message); originalToast(message, error); };
+  context.toast = (message, error) => { toasts.push({ message: String(message), error: Boolean(error) }); if (error) errors.push(message); originalToast(message, error); };
   const event = async (selector, type = 'click', value) => {
     const el = $(selector); if (value !== undefined) el.value = value;
     if (type === 'click') await el.click(); else { assert.equal(typeof el['on' + type], 'function', `${selector} ${type} handler`); await el['on' + type]({ target: el }); }
@@ -174,7 +174,7 @@ function panel(fullStartup = false) {
   const enter = async () => { const tab = document.querySelectorAll('.tab').find((el) => el.dataset.view === 'lorebooks'); await tab.click(); await tick(); };
   const row = (attr, uid) => document.querySelectorAll(`[${attr}]`).find((el) => el.dataset[attr.replace(/^data-/, '').replace(/-([a-z])/g, (_, c) => c.toUpperCase())] === String(uid));
   const ids = () => document.querySelectorAll('[data-lb-open]').map((el) => el.dataset.lbOpen);
-  return { $, document, context, event, enter, row, ids, books, requests, errors, prompts, confirmations, urls, revoked, intervals, fail: (response) => { fail = response; } };
+  return { $, document, context, event, enter, row, ids, books, requests, errors, prompts, confirmations, confirmTexts, toasts, urls, revoked, intervals, fail: (response) => { fail = response; } };
 }
 
 test('complete module startup succeeds and timer never refreshes lorebook forms', async () => {
@@ -263,6 +263,102 @@ test('text/group/active filters, numeric ordering, checkbox batch and blue/green
   assert.deepEqual(p.ids(), ['9', '7']);
   assert.equal(p.row('data-lb-active', 7).classList.contains('off'), false);
   assert.deepEqual(p.errors, []);
+});
+
+test('批量删除：未勾选时按钮禁用，程序化触发也只提示不请求', async () => {
+  const p = panel(); await p.enter();
+  const button = p.$('#lb-batch-delete');
+  assert.equal(button.disabled, true, '没有勾选时批量删除必须禁用');
+  assert.ok(button.classes.has('danger-solid'), '危险操作要用危险色样式，而不是普通 ghost 按钮');
+  const before = p.requests.length;
+  await button.click();
+  await tick();
+  assert.equal(p.requests.length, before, '禁用按钮不发出任何请求');
+  assert.equal(p.confirmTexts.length, 0, '未勾选时也不弹二次确认');
+
+  // 程序化触发（绕过 disabled）同样不能静默什么都不做。
+  await button.onclick({ target: button });
+  await tick();
+  assert.equal(p.requests.length, before, '无勾选仍然不发删除请求');
+  assert.deepEqual(p.toasts.at(-1), { message: '请先勾选要删除的条目', error: true });
+  assert.match(p.$('#lb-status').textContent, /请先勾选/);
+});
+
+test('批量删除：逐条串行调 entry-delete，确认后刷新列表并清空勾选', async () => {
+  const p = panel(); await p.enter();
+  for (const uid of [9, 7]) {
+    const box = p.row('data-lb-select', uid);
+    box.checked = true;
+    await box.onchange({ target: box });
+    await tick();
+  }
+  assert.equal(p.$('#lb-batch-delete').disabled, false, '有勾选后按钮可用');
+  assert.match(p.$('#lb-count').textContent, /已选 2/);
+
+  const before = p.requests.length;
+  await p.event('#lb-batch-delete');
+  const deletes = p.requests.slice(before).filter((r) => r.url === '/api/host/lorebooks/entry-delete');
+  assert.deepEqual(deletes.map((r) => [r.method, r.body]), [
+    ['POST', { bookId: 1, uid: 9 }],
+    ['POST', { bookId: 1, uid: 7 }],
+  ], '按勾选顺序逐条串行删除，复用现有 entry-delete 接口');
+
+  const text = p.confirmTexts.at(-1);
+  assert.match(text, /2 条/, '确认文案必须写清将删除多少条');
+  assert.match(text, /不可撤销/);
+
+  assert.deepEqual(Object.keys(p.books.get(1).entries), ['8']);
+  assert.deepEqual(p.ids(), ['8'], '删除后列表按宿主返回刷新');
+  assert.equal(p.requests.slice(before).at(-1).url, '/api/host/lorebooks/get?bookId=1', '刷新走世界书 get');
+  assert.match(p.$('#lb-count').textContent, /已选 0/);
+  assert.equal(p.$('#lb-select-all').checked, false);
+  assert.equal(p.$('#lb-select-all').indeterminate, false);
+  assert.equal(p.$('#lb-batch-delete').disabled, true, '勾选清空后批量栏回到未选中态');
+  assert.deepEqual(p.toasts.at(-1), { message: '已删除 2 条条目', error: false });
+  assert.deepEqual(p.errors, []);
+});
+
+test('批量删除：确认取消不发请求，勾选保留', async () => {
+  const p = panel(); await p.enter();
+  const box = p.row('data-lb-select', 7);
+  box.checked = true;
+  await box.onchange({ target: box });
+  await tick();
+  const before = p.requests.length;
+  p.confirmations.push(false);
+  await p.event('#lb-batch-delete');
+  assert.match(p.confirmTexts.at(-1), /1 条/);
+  assert.equal(p.requests.length, before, '取消确认后一条请求都不发');
+  assert.equal(Object.hasOwn(p.books.get(1).entries, 7), true);
+  assert.deepEqual(p.ids(), ['8', '7', '9']);
+  assert.match(p.$('#lb-count').textContent, /已选 1/);
+  assert.deepEqual(p.errors, []);
+});
+
+test('批量删除：部分失败不中断、不复活已删条目，toast 报清删除与失败条数', async () => {
+  const p = panel(); await p.enter();
+  for (const uid of [9, 7]) {
+    const el = p.row('data-lb-select', uid);
+    el.checked = true;
+    await el.onchange({ target: el });
+    await tick();
+  }
+  p.fail({ ok: false, error: 'host unavailable' }); // 第一条删除失败，第二条仍然继续
+  await p.event('#lb-batch-delete');
+
+  assert.deepEqual(p.requests.filter((r) => r.url === '/api/host/lorebooks/entry-delete').map((r) => r.body.uid), [9, 7], '单条失败不会中断串行队列');
+  assert.deepEqual(Object.keys(p.books.get(1).entries), ['8', '9'], '只删掉成功的那一条（uid 7）');
+  assert.equal(Object.hasOwn(p.books.get(1).entries, 7), false);
+  assert.equal(Object.hasOwn(p.books.get(1).entries, 9), true, '失败的那条仍留在宿主里');
+  assert.deepEqual(p.ids(), ['8', '9'], '已删条目不会被重新显示，失败条目按宿主返回保留');
+
+  const last = p.toasts.at(-1);
+  assert.equal(last.error, true);
+  assert.match(last.message, /已删除 1 条/);
+  assert.match(last.message, /1 条失败/);
+  assert.match(last.message, /#9 host unavailable/);
+  assert.match(p.$('#lb-status').textContent, /1 条删除失败/);
+  assert.match(p.$('#lb-count').textContent, /已选 0/);
 });
 
 test('order steppers patch native order and move the row in the rendered sequence', async () => {

@@ -848,6 +848,23 @@ legend { padding: 0 var(--s1); font-size: 11.5px; color: var(--text-dim); }
   background: var(--surface);
 }
 .lb-batchbar .hint { font-family: var(--mono); }
+/* 批量删除是破坏性操作：实心危险色，明显区别于启用/禁用的普通 ghost 按钮 */
+.lb-batchbar .btn.danger-solid {
+  border-color: rgba(207, 111, 120, 0.55);
+  background: var(--crit-soft);
+  color: var(--crit);
+  font-weight: 600;
+}
+.lb-batchbar .btn.danger-solid:hover {
+  background: var(--crit);
+  border-color: var(--crit);
+  color: var(--bg);
+}
+.lb-batchbar .btn.danger-solid:disabled:hover {
+  background: var(--crit-soft);
+  border-color: rgba(207, 111, 120, 0.55);
+  color: var(--crit);
+}
 .lb-table-wrap { flex: 1; min-height: 0; overflow: auto; }
 .lb-table { min-width: 720px; }
 .lb-table th { position: sticky; top: 0; z-index: 2; background: var(--surface); }

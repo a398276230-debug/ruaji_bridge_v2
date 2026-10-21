@@ -1073,7 +1073,7 @@ function updateLoreControls() {
   for (const id of ['lb-enabled', 'lb-rename', 'lb-delete', 'lb-export', 'lb-new', 'lb-rename-save']) {
     loreById(id).disabled = busy || noBook;
   }
-  for (const id of ['lb-batch-on', 'lb-batch-off']) {
+  for (const id of ['lb-batch-on', 'lb-batch-off', 'lb-batch-delete']) {
     loreById(id).disabled = busy || noBook || !lore.selected.size;
   }
   loreById('lb-save').disabled = busy || noBook;
@@ -1081,6 +1081,13 @@ function updateLoreControls() {
   loreById('lb-import-confirm').disabled = busy || !lore.pendingImport;
   loreById('lb-export-download').disabled = busy || noBook;
   loreById('lb-export-copy').disabled = busy || noBook;
+}
+
+// 批量操作后必须显式清空勾选：否则已删条目仍留在 Set 里，批量栏会显示过期的“已选 N”。
+function clearLoreSelection() {
+  lore.selected.clear();
+  loreById('lb-select-all').checked = false;
+  loreById('lb-select-all').indeterminate = false;
 }
 
 function loreDirty() {
@@ -1697,6 +1704,40 @@ function bindLorebooks() {
       toast(enabled ? '已批量启用' : '已批量禁用');
     });
   }
+
+  $('#lb-batch-delete').onclick = () => {
+    // 按钮在未勾选时是 disabled；这里再拦一次，保证程序化触发也不会静默无反应。
+    if (!lore.selected.size) {
+      setLoreStatus('请先勾选要删除的条目', 'err');
+      toast('请先勾选要删除的条目', true);
+      return undefined;
+    }
+    return loreAction(async () => {
+      if (!discardLore()) return;
+      const uids = [...lore.selected];
+      const bookName = currentLoreBook()?.name ?? '当前世界书';
+      if (!confirm(`永久删除「${bookName}」中已勾选的 ${uids.length} 条条目？\n\n此操作不可撤销，删除后无法恢复。`)) return;
+      const failed = [];
+      // 串行删除：宿主只有一份 SQLite，逐条等回执既不打爆它，也能精确统计失败数。
+      for (const uid of uids) {
+        try { await loreApi('entry-delete', { bookId: lore.bookId, uid }); }
+        catch (e) { failed.push({ uid, message: e.message }); }
+      }
+      const deleted = uids.length - failed.length;
+      clearLoreSelection();
+      // 只以宿主返回的列表为准：部分失败时已删条目不会被重新画回来。
+      await loadLoreBook(lore.bookId);
+      if (!failed.length) {
+        setLoreStatus(`已删除 ${deleted} 条条目`, 'ok');
+        toast(`已删除 ${deleted} 条条目`);
+        return;
+      }
+      const detail = failed.slice(0, 3).map((f) => `#${f.uid} ${f.message}`).join('；')
+        + (failed.length > 3 ? ` 等 ${failed.length} 条` : '');
+      setLoreStatus(`已删除 ${deleted} 条，${failed.length} 条删除失败（${detail}）`, 'err');
+      toast(`已删除 ${deleted} 条，${failed.length} 条失败：${detail}`, true);
+    });
+  };
 
   // 导入
   $('#lb-import').onclick = () => { if (!lore.busy) { resetImport(); openDialog('lb-import-dialog'); } };
