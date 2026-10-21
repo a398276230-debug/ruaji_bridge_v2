@@ -41,6 +41,8 @@ import sqlite3
 import time
 from typing import Any, Iterator
 
+from .lorebook_engine import invalidate_regex_cache
+
 DEFAULT_SETTINGS = dict(enabled=True, scanDepth=2, recursive=True, maxRecursionSteps=8,
                         budgetTokens=2048, caseSensitive=False, matchWholeWords=False,
                         useGroupScoring=False, authorNote='', authorNoteDepth=4, authorNoteRole=0)
@@ -112,6 +114,7 @@ def _validate_entry(entry: dict) -> None:
             _text(entry[key], key)
     for key in ('disable', 'constant', 'selective', 'useProbability', 'excludeRecursion',
                 'preventRecursion', 'groupOverride', 'vectorized', 'addMemo', 'ignoreBudget',
+                'keyRegex',
                 'matchPersonaDescription', 'matchCharacterDescription', 'matchCharacterPersonality',
                 'matchCharacterDepthPrompt', 'matchScenario', 'matchCreatorNotes'):
         if key in entry:
@@ -277,7 +280,10 @@ class LorebookStore:
     def delete_book(self, book_id: int) -> bool:
         _integer(book_id, 'book_id', 1)
         with self._connection(True) as conn:
-            return conn.execute('DELETE FROM books WHERE id=?', (book_id,)).rowcount > 0
+            deleted = conn.execute('DELETE FROM books WHERE id=?', (book_id,)).rowcount > 0
+        if deleted:
+            invalidate_regex_cache(world=book_id)
+        return deleted
 
     def list_entries(self, book_id: int) -> list[dict]:
         with self._connection() as conn:
@@ -311,13 +317,20 @@ class LorebookStore:
                                        (book_id,)).fetchone()[0]
                 conn.execute('INSERT INTO entries(book_id,uid,entry_key,ordinal,raw) VALUES (?,?,?,?,?)',
                              (book_id, uid, str(uid), ordinal, _json(raw)))
-            return dict(book_id=book_id, world=book['name'], uid=uid, raw=raw)
+            record = dict(book_id=book_id, world=book['name'], uid=uid, raw=raw)
+        invalidate_regex_cache(world=book_id, uid=uid)
+        invalidate_regex_cache(world=record['world'], uid=uid)
+        return record
 
     def delete_entry(self, book_id: int, uid: int) -> bool:
         _integer(uid, 'uid')
         with self._connection(True) as conn:
-            self._book(conn, book_id)
-            return conn.execute('DELETE FROM entries WHERE book_id=? AND uid=?', (book_id, uid)).rowcount > 0
+            book = self._book(conn, book_id)
+            deleted = conn.execute('DELETE FROM entries WHERE book_id=? AND uid=?', (book_id, uid)).rowcount > 0
+        if deleted:
+            invalidate_regex_cache(world=book_id, uid=uid)
+            invalidate_regex_cache(world=book['name'], uid=uid)
+        return deleted
 
     def set_entries_enabled(self, book_id: int, uids: list[int] | None, enabled: bool) -> int:
         _boolean(enabled, 'enabled')

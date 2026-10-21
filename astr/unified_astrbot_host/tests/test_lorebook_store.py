@@ -183,6 +183,7 @@ def test_active_entries_and_atomic_bulk_toggle(store):
     {"key": "word"}, {"key": [1]}, {"keysecondary": None},
     {"content": 4}, {"content": None}, {"disable": 1}, {"constant": "false"},
     {"selective": []}, {"useProbability": 1}, {"excludeRecursion": None},
+    {"keyRegex": "true"}, {"keyRegex": 1},
     {"caseSensitive": "false"}, {"matchWholeWords": 0},
     {"order": 1.5}, {"depth": -1}, {"role": 3}, {"position": 8},
     {"selectiveLogic": -1}, {"probability": 101}, {"probability": True},

@@ -634,3 +634,29 @@ test('autoMaintained source filter isolates MCP auto-maintained entries vs manua
   assert.deepEqual(p.ids(), ['8', '7', '9']);
   assert.deepEqual(p.errors, []);
 });
+
+test('keyRegex toggle, usage tip with example, and regex badge in entry table', async () => {
+  const p = panel();
+  await p.enter();
+  await p.row('data-lb-open', 9).click();
+  const checkbox = p.$('#lb-field-keyRegex');
+  assert.equal(checkbox.checked, false, 'keyRegex defaults to false');
+  assert.match(p.$('#lb-entry-fields').innerHTML, /我已经\\s\*\\d\+\\s\*秒没听到\.\+的故事了/, 'editor shows regex example in help text');
+
+  checkbox.checked = true;
+  await p.event('#lb-field-keyRegex', 'change');
+  await p.event('#lb-field-key', 'change', '我已经\\s*\\d+\\s*秒没听到.+的故事了');
+  await p.event('#lb-save');
+
+  const patch = p.requests.filter((r) => r.url.endsWith('/entry')).at(-1).body.entry;
+  assert.deepEqual(patch, {
+    uid: 9,
+    keyRegex: true,
+    key: ['我已经\\s*\\d+\\s*秒没听到.+的故事了'],
+  });
+  assert.equal(p.books.get(1).entries[9].keyRegex, true);
+  assert.match(p.$('#lb-entries').innerHTML, /is-regex-badge[^>]*>正则</, 'table row displays regex badge');
+  assert.match(p.$('#lb-entries').innerHTML, /#9 · 1 关键词 · 正则/, 'table row subtitle marks regex entry');
+  assert.deepEqual(p.errors, []);
+});
+

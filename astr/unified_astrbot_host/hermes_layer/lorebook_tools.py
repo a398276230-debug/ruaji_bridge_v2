@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import json
+import sqlite3
 from typing import Any, Callable
 
 
@@ -21,9 +22,22 @@ ENTRY_FIELD_PROPERTIES: dict[str, Any] = {
         "type": "array",
         "items": {"type": "string"},
         "description": (
-            "主关键词列表（字符串数组，OR 关系，支持普通文本或 /regex/flags 正则）。"
+            "主关键词列表（字符串数组，OR 关系）。"
+            "默认（keyRegex=false）按普通字面文本或 /regex/flags 匹配；"
+            "当 keyRegex=true 时，每一项都作为正则表达式源串解析（无需加首尾 /，如 '我已经\\\\s*\\\\d+\\\\s*秒没听到.+的故事了'）。"
             "绿灯条目（constant=false）必填且至少包含 1 个非空关键词；"
             "蓝灯常驻条目（constant=true）可传空数组 [] 或省略。"
+        ),
+    },
+    "keyRegex": {
+        "type": "boolean",
+        "description": (
+            "可选。主关键词按正则解析开关（默认 false）。"
+            "设为 true 时，key 数组中的每一项都是正则表达式源串而非字面串："
+            "默认不区分大小写（带 i 标志），受 caseSensitive 控制（caseSensitive=true 时去掉 i）；"
+            "正则模式下 matchWholeWords 不生效（整词仅用于字面匹配）。"
+            "注意转义：匹配元字符字面值（如 . * + ? ( ) [ ] { } ^ $ | \\）时需用反斜杠转义（JSON 字符串中写双反斜杠，如 \\\\d、\\\\s、\\\\.、\\\\( 等），"
+            "定型文示例：'我已经\\\\s*\\\\d+\\\\s*秒没听到.+的故事了'。"
         ),
     },
     "keysecondary": {
@@ -126,11 +140,11 @@ ENTRY_FIELD_PROPERTIES: dict[str, Any] = {
     },
     "caseSensitive": {
         "type": ["boolean", "null"],
-        "description": "可选。关键词匹配是否区分大小写（true/false，传 null 继承全局设置）。",
+        "description": "可选。关键词匹配是否区分大小写（true/false，传 null 继承全局设置；keyRegex=true 时默认带 i 忽略大小写，caseSensitive=true 时去掉 i）。",
     },
     "matchWholeWords": {
         "type": ["boolean", "null"],
-        "description": "可选。英文关键词是否按整词边界匹配（true/false，传 null 继承全局设置）。",
+        "description": "可选。英文关键词是否按整词边界匹配（true/false，传 null 继承全局设置；注意：keyRegex=true 正则模式下 matchWholeWords 不生效）。",
     },
     "useGroupScoring": {
         "type": ["boolean", "null"],
@@ -304,6 +318,16 @@ DELETE_SCHEMA: dict[str, Any] = {
         },
     },
     "required": ["book", "uid"],
+    "additionalProperties": False,
+}
+
+DELETE_BY_ID_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "book_id": {"type": "integer", "minimum": 1, "description": "已有世界书的编号。"},
+        "uid": copy.deepcopy(DELETE_SCHEMA["properties"]["uid"]),
+    },
+    "required": ["book_id", "uid"],
     "additionalProperties": False,
 }
 
@@ -839,6 +863,28 @@ def build_lorebook_tools(unified: Any, tool_type: Callable[..., Any]) -> list[An
             "entry": copy.deepcopy(existing["raw"]),
         }
 
+    async def delete_lorebook_entry(book_id: int, uid: int) -> dict[str, Any]:
+        if not _valid_book_id(book_id):
+            return _bad_arguments("book_id must be a positive integer")
+        if not _valid_uid(uid):
+            return _bad_arguments("uid must be a non-negative integer")
+        try:
+            result = await lorebook_delete_entry(book_id=book_id, uid=uid)
+        except (sqlite3.Error, OSError):
+            return {
+                "ok": False,
+                "book_id": book_id,
+                "uid": uid,
+                "error": "lorebook_store_error",
+                "message": "世界书删除失败，数据库或存储暂不可用，请稍后重试",
+            }
+        result = {**result, "book_id": book_id, "uid": uid}
+        if result["ok"]:
+            raw = result["entry"]
+            result["comment"] = copy.deepcopy(raw.get("comment", ""))
+            result["key"] = copy.deepcopy(raw.get("key", []))
+        return result
+
     async def upsert_lorebook_entry(book_id: int, entry: dict[str, Any]) -> dict[str, Any]:
         if not _valid_book_id(book_id):
             return _bad_arguments("book_id must be a positive integer")
@@ -876,7 +922,9 @@ def build_lorebook_tools(unified: Any, tool_type: Callable[..., Any]) -> list[An
                 "未配默认书时若仅有一本世界书则自动选中，多本世界书时报错并列出可选书名）。"
                 "【硬护栏】经 MCP 工具新建的条目一律强制 constant=false（禁止设置蓝灯常驻），"
                 "并自动在 extensions 中标记 autoMaintained=true；仅 Web 面板手工编辑可设置常驻。"
-                "可选支持 group、order、disable、probability、scanDepth、caseSensitive、"
+                "可选支持 keyRegex（主关键词正则开关，默认 false；开启后 key 每项按正则源串解析，默认带 i，受 caseSensitive 控制，matchWholeWords 不生效；"
+                "需转义时在 JSON 中写 \\\\s、\\\\d、\\\\. 等，例如 '我已经\\\\s*\\\\d+\\\\s*秒没听到.+的故事了'）、"
+                "group、order、disable、probability、scanDepth、caseSensitive、"
                 "matchWholeWords、selective、selectiveLogic、keysecondary、comment、extensions 等字段。"
                 "成功返回 {ok: true, book_id, uid, entry}；若 key 命中已有条目，会额外返回 duplicate_of 列表提示。"
             ),
@@ -892,7 +940,7 @@ def build_lorebook_tools(unified: Any, tool_type: Callable[..., Any]) -> list[An
                 "绝不会把未传字段重置为默认值；extensions 对象会按字典递归合并。"
                 "【硬护栏】MCP 通道不允许将条目改为蓝灯常驻（constant=true 会被强制覆写为 false），"
                 "也不允许清除 extensions.autoMaintained 标记；常驻仅限在 Web 面板手工开启。"
-                "支持修改 key、content、group、order、disable、probability、scanDepth、"
+                "支持修改 key、keyRegex（主关键词正则开关，需转义时写 \\\\s、\\\\d、\\\\. 等）、content、group、order、disable、probability、scanDepth、"
                 "caseSensitive、matchWholeWords、selective、selectiveLogic、keysecondary、comment、extensions 等字段。"
                 "成功返回 {ok: true, book_id, uid, entry}。"
             ),
@@ -908,6 +956,17 @@ def build_lorebook_tools(unified: Any, tool_type: Callable[..., Any]) -> list[An
             ),
             parameters=copy.deepcopy(DELETE_SCHEMA),
             handler=lorebook_delete_entry,
+        ),
+        tool_type(
+            name="delete_lorebook_entry",
+            description=(
+                "按 book_id 与 uid 物理删除单条世界书条目（不可逆）。"
+                "删除前请先用 search_lorebook_entries 确认目标。"
+                "成功返回 {ok: true, book_id, uid, deleted: true, comment, key, entry}；"
+                "条目不存在返回 {ok: false, book_id, uid, error: 'entry_not_found', message}。"
+            ),
+            parameters=copy.deepcopy(DELETE_BY_ID_SCHEMA),
+            handler=delete_lorebook_entry,
         ),
         tool_type(
             name="upsert_lorebook_entry",
@@ -930,5 +989,6 @@ __all__ = [
     "ADD_SCHEMA",
     "UPDATE_SCHEMA",
     "DELETE_SCHEMA",
+    "DELETE_BY_ID_SCHEMA",
     "UPSERT_SCHEMA",
 ]

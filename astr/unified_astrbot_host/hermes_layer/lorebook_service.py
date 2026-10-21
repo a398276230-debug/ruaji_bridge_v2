@@ -104,6 +104,7 @@ class LorebookService:
         selection = dict(blocks=blocks, diagnostics={k: result[k] for k in ('tokensEstimate', 'iterations')})
         selection['diagnostics']['dropped'] = [dict(world=d['entry'].get('world'),
             uid=d['entry'].get('uid'), reason=d['reason']) for d in result['dropped']]
+        selection['diagnostics']['regex'] = list(result.get('diagnostics', []))
         self.store.save_session_state(self.session_key(message), dict(effects=result['effects'],
             lastMessageId=mid, revision=revision, selection=selection))
         return selection

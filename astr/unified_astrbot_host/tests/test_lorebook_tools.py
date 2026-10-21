@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import sqlite3
 from pathlib import Path
 import sys
 import tempfile
@@ -40,6 +41,7 @@ NATIVE_NAMES = {
     "lorebook_add_entry",
     "lorebook_update_entry",
     "lorebook_delete_entry",
+    "delete_lorebook_entry",
     "upsert_lorebook_entry",
 }
 LEGACY_NAMES = {"search_community_meme", "record_community_meme"}
@@ -176,7 +178,7 @@ def test_living_memory_adapter_exports_only_plugin_tools():
     host.mounts = {"living_memory": SimpleNamespace(config={})}
     registry = ToolRegistry(host)
     assert set(registry.names) == names | NATIVE_NAMES
-    assert len(registry.names) == 8
+    assert len(registry.names) == 9
     assert call(registry, "search_lorebook_entries", {"query": "cat"})["count"] == 2
 
 
@@ -239,6 +241,74 @@ def test_schema_native_fields_extensions_and_factory_isolation():
     assert SEARCH_SCHEMA is not first["search_lorebook_entries"].parameters
     assert UPSERT_SCHEMA is not first["upsert_lorebook_entry"].parameters
     assert ENTRY_SCHEMA is not first["upsert_lorebook_entry"].parameters["properties"]["entry"]
+
+
+def test_delete_by_id_schema_is_strict_and_isolated():
+    first = {tool.name: tool for tool in build_lorebook_tools(unified(), HermesTool)}
+    second = {tool.name: tool for tool in build_lorebook_tools(unified(), HermesTool)}
+    schema = first["delete_lorebook_entry"].parameters
+    assert schema["required"] == ["book_id", "uid"]
+    assert set(schema["properties"]) == {"book_id", "uid"}
+    assert schema["additionalProperties"] is False
+    assert all(value["type"] == "integer" for value in schema["properties"].values())
+    schema["properties"]["uid"]["minimum"] = 42
+    assert second["delete_lorebook_entry"].parameters["properties"]["uid"]["minimum"] == 0
+
+
+def test_delete_by_id_persists_and_search_immediately_excludes_uid(store):
+    book = store.create_book("Delete test")
+    other_book = store.create_book("Other book")
+    raw = {"uid": 0, "comment": "Target entry", "key": ["delete-target"], "content": "body"}
+    store.upsert_entry(book["id"], raw)
+    store.upsert_entry(other_book["id"], raw)
+    registry = ToolRegistry(unified(store))
+    assert call(registry, "search_lorebook_entries", {"query": "delete-target", "book_id": book["id"]})["count"] == 1
+    result = call(registry, "delete_lorebook_entry", {"book_id": book["id"], "uid": 0})
+    assert result["ok"] is True and result["deleted"] is True
+    assert result["book_id"] == book["id"] and result["uid"] == 0
+    assert result["comment"] == raw["comment"] and result["key"] == raw["key"]
+    assert result["entry"] == raw
+    assert call(registry, "search_lorebook_entries", {"query": "*", "book_id": book["id"]})["count"] == 0
+    reopened = LorebookStore(Path(store.db_path).parent)
+    assert reopened.list_entries(book["id"]) == []
+    assert reopened.list_entries(other_book["id"])[0]["raw"] == raw
+
+
+def test_delete_by_id_missing_uid_returns_error_without_changes(store):
+    book = store.create_book("Missing entry test")
+    store.upsert_entry(book["id"], {"uid": 0, "key": ["keep"], "content": "keep"})
+    before = store.list_entries(book["id"])
+    result = call(ToolRegistry(unified(store)), "delete_lorebook_entry", {"book_id": book["id"], "uid": 999})
+    assert result["ok"] is False and result["error"] == "entry_not_found"
+    assert result["book_id"] == book["id"] and result["uid"] == 999
+    assert "999" in result["message"]
+    assert store.list_entries(book["id"]) == before
+
+
+@pytest.mark.parametrize("arguments", [
+    {}, {"book_id": 1}, {"book_id": True, "uid": 0},
+    {"book_id": "1", "uid": 0}, {"book_id": 0, "uid": 0},
+    {"book_id": 1, "uid": False}, {"book_id": 1, "uid": -1},
+    {"book_id": 1, "uid": "0"}, {"book_id": 1, "uid": 0, "delete": True},
+])
+def test_delete_by_id_rejects_invalid_arguments(arguments):
+    result = call(ToolRegistry(unified(DummyStore())), "delete_lorebook_entry", arguments)
+    assert result["ok"] is False and result["error"] == "bad_arguments"
+
+
+def test_delete_by_id_store_and_book_errors(monkeypatch):
+    assert call(ToolRegistry(unified()), "delete_lorebook_entry", {"book_id": 1, "uid": 0})["error"] == "lorebook_store_unavailable"
+    store = DummyStore()
+    registry = ToolRegistry(unified(store))
+    assert call(registry, "delete_lorebook_entry", {"book_id": 999, "uid": 0})["error"] == "lorebook_not_found"
+
+    def fail(*args):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store, "delete_entry", fail)
+    result = call(registry, "delete_lorebook_entry", {"book_id": 1, "uid": 0})
+    assert result["ok"] is False and result["error"] == "lorebook_store_error"
+    assert store.list_entries(1)[0]["uid"] == 0
 
 
 def test_search_casefold_filter_limit_book_name_and_native_results():
@@ -681,4 +751,45 @@ def test_add_entry_reports_duplicate_of_without_blocking_write(store):
     assert dup["uid"] == first["uid"]
     assert dup["matched_keys"] == ["鼠蛋"]
     assert len(store.list_entries(book2["id"])) == 1
+
+
+def test_key_regex_exposed_in_mcp_tools_and_persisted(store):
+    book = store.create_book("定型文词典")
+    registry = ToolRegistry(unified(store))
+
+    tools = {tool.name: tool for tool in build_lorebook_tools(unified(store), HermesTool)}
+    for tool_name in ("lorebook_add_entry", "lorebook_update_entry"):
+        props = tools[tool_name].parameters["properties"]
+        assert "keyRegex" in props
+        assert props["keyRegex"]["type"] == "boolean"
+        assert "matchWholeWords" in props["keyRegex"]["description"]
+        assert "我已经" in props["keyRegex"]["description"]
+        assert "keyRegex" in tools[tool_name].description
+
+    added = call(registry, "lorebook_add_entry", {
+        "book": book["id"],
+        "key": [r"我已经\s*\d+\s*秒没听到.+的故事了"],
+        "keyRegex": True,
+        "content": "催促讲故事的群内定型文。",
+        "comment": "定型文：没听到故事",
+    })
+    assert added["ok"] is True
+    assert added["entry"]["keyRegex"] is True
+
+    updated = call(registry, "lorebook_update_entry", {
+        "book": book["id"],
+        "uid": added["uid"],
+        "keyRegex": False,
+    })
+    assert updated["ok"] is True
+    assert updated["entry"]["keyRegex"] is False
+
+    bad = call(registry, "lorebook_add_entry", {
+        "book": book["id"],
+        "key": ["test"],
+        "keyRegex": "yes",
+        "content": "bad type",
+    })
+    assert bad["ok"] is False and bad["error"] == "bad_arguments"
+
 

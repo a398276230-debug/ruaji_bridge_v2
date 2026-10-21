@@ -308,3 +308,24 @@ def test_maintenance_hint_in_final_prompt_and_not_duplicated(store):
 
     asyncio.run(scenario())
 
+
+def test_service_key_regex_and_diagnostics_roundtrip(store):
+    book = store.create_book('regex-book')
+    store.upsert_entry(book['id'], {
+        'key': ['[broken_regex', r'我已经\s*\d+\s*秒没听到.+的故事了'],
+        'keyRegex': True,
+        'content': '定型文设定注入',
+    })
+    service = LorebookService(store)
+
+    async def scenario():
+        res = await service.context(message('我已经 30 秒没听到 abc 的故事了', 'm-regex-1'))
+        assert [b['content'] for b in res['blocks']] == ['定型文设定注入']
+        assert len(res['diagnostics']['regex']) == 1
+        assert res['diagnostics']['regex'][0]['reason'] == 'invalid-regex'
+        assert res['diagnostics']['regex'][0]['key'] == '[broken_regex'
+        assert store.export_book(book['id'])['entries']['0']['keyRegex'] is True
+
+    asyncio.run(scenario())
+
+

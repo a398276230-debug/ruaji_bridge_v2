@@ -910,6 +910,16 @@ legend { padding: 0 var(--s1); font-size: 11.5px; color: var(--text-dim); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.key-chip.is-regex-badge {
+  border-color: rgba(116, 178, 255, 0.45);
+  background: rgba(116, 178, 255, 0.14);
+  color: var(--accent);
+  font-weight: 600;
+}
+.key-chip.is-regex {
+  border-style: dashed;
+  color: var(--text);
+}
 .key-more { font-size: 10.5px; color: var(--text-faint); }
 
 .lamp {

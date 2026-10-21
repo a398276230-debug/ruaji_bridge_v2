@@ -952,6 +952,7 @@ const LB_FIELDS = [
   ['comment', '标题 / 注释', 'text', '', null, 'basic'],
   ['key', '主关键词（每行一项）', 'list', [], null, 'basic'],
   ['keysecondary', '次关键词（每行一项）', 'list', [], null, 'basic'],
+  ['keyRegex', '主关键词按正则解析', 'bool', false, null, 'basic'],
   ['content', '正文', 'textarea', '', null, 'basic'],
   ['constant', '蓝灯常驻', 'bool', false, null, 'basic'],
   ['disable', '禁用条目', 'bool', false, null, 'basic'],
@@ -1001,6 +1002,8 @@ const LB_SETTINGS = [
 ];
 
 const LB_TIPS = {
+  keyRegex: '开启后主关键词每行按正则表达式源串匹配（无需加首尾 /，默认忽略大小写，受 caseSensitive 控制，matchWholeWords 不生效）。例：我已经\\s*\\d+\\s*秒没听到.+的故事了',
+  matchWholeWords: '仅对字面匹配生效；开启主关键词正则（keyRegex）时整词匹配不生效。',
   constant: '蓝灯：不需要关键词命中，每轮都可能注入；仍受禁用、概率、分组、预算和时效约束。',
   selective: '只控制次关键词门禁，不是“是否启用”。关掉后仍需要主关键词命中。',
   position: '存储兼容：不决定插入位置，命中正文统一进入本轮 user 顶部资料块。',
@@ -1139,10 +1142,10 @@ function closeDialog(id) {
 
 function loreFieldMarkup([key, label, type, fallback, choices], prefix) {
   const id = `${prefix}${key}`;
-  const span = type === 'textarea' ? ' span-2' : '';
+  const span = (type === 'textarea' || key === 'keyRegex') ? ' span-2' : '';
   const tip = LB_TIPS[key] ? `<span class="field-help">${esc(LB_TIPS[key])}</span>` : '';
   if (type === 'bool') {
-    return `<label class="field field-check${span}" for="${id}"><input id="${id}" type="checkbox"><span class="field-label">${esc(label)}</span>${LB_TIPS[key] ? `<span class="field-help">${esc(LB_TIPS[key])}</span>` : ''}</label>`;
+    return `<label class="field field-check${span}" for="${id}"><input id="${id}" type="checkbox"><span class="field-label">${esc(label)}${key === 'keyRegex' ? ` <code>${esc(key)}</code>` : ''}</span>${LB_TIPS[key] ? `<span class="field-help">${esc(LB_TIPS[key])}</span>` : ''}</label>`;
   }
   let control;
   if (type === 'select' || type === 'tri') {
@@ -1315,7 +1318,10 @@ function filteredLoreEntries() {
 
 function loreRowMarkup({ uid, raw }) {
   const keys = Array.isArray(raw.key) ? raw.key.filter((k) => typeof k === 'string' && k.trim()) : [];
-  const chips = keys.slice(0, 3).map((k) => `<span class="key-chip" title="${esc(k)}">${esc(k)}</span>`).join('')
+  const keyRegex = Boolean(raw.keyRegex ?? raw.extensions?.keyRegex);
+  const regexBadge = keyRegex ? '<span class="key-chip is-regex-badge" title="主关键词按正则表达式解析 (keyRegex=true)">正则</span>' : '';
+  const chips = regexBadge
+    + keys.slice(0, 3).map((k) => `<span class="key-chip${keyRegex ? ' is-regex' : ''}" title="${esc(k)}">${esc(k)}</span>`).join('')
     + (keys.length > 3 ? `<span class="key-more">+${keys.length - 3}</span>` : '');
   const constant = Boolean(raw.constant);
   const disabled = Boolean(raw.disable);
@@ -1323,12 +1329,12 @@ function loreRowMarkup({ uid, raw }) {
   const order = Number.isFinite(Number(raw.order)) ? Number(raw.order) : 100;
   const lampClass = `${constant ? 'blue lb-constant' : 'green lb-keyword'}${disabled ? ' lb-disabled' : ''}`;
   const lampTitle = constant ? '蓝灯 · 常驻：无需关键词命中（点击改为绿灯）' : '绿灯 · 关键词：命中主关键词后注入（点击改为蓝灯）';
-  return `<tr class="lb-row${disabled ? ' is-disabled' : ''}" data-lb-row="${uid}">
+  return `<tr class="lb-row${disabled ? ' is-disabled' : ''}${keyRegex ? ' is-regex-entry' : ''}" data-lb-row="${uid}">
     <td class="c-check"><input type="checkbox" data-lb-select="${uid}" aria-label="选择条目 ${uid}"${lore.selected.has(uid) ? ' checked' : ''}></td>
     <td class="c-lamp"><button type="button" class="lamp ${lampClass}" data-lb-mode="${uid}" title="${lampTitle}" aria-label="${constant ? '常驻，点击改为关键词' : '关键词，点击改为常驻'}"></button></td>
     <td class="c-name"><button type="button" class="lb-name" data-lb-open="${uid}">
       <span class="lb-name-text">${esc(raw.comment || `条目 #${uid}`)}</span>
-      <span class="lb-name-sub">#${uid}${keys.length ? ` · ${keys.length} 关键词` : ''}${raw.content ? ` · ${String(raw.content).length} 字符` : ''}${autoMaintained ? ' · 自动维护' : ''}</span>
+      <span class="lb-name-sub">#${uid}${keys.length ? ` · ${keys.length} 关键词` : ''}${keyRegex ? ' · 正则' : ''}${raw.content ? ` · ${String(raw.content).length} 字符` : ''}${autoMaintained ? ' · 自动维护' : ''}</span>
     </button></td>
     <td class="c-keys">${chips || '<span class="key-more">—</span>'}</td>
     <td class="c-group">${esc(raw.group || '—')}</td>

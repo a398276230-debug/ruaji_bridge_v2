@@ -13,7 +13,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from hermes_layer.lorebook_engine import ENTRY_DEFAULTS, evaluate, normalize_entry
+from hermes_layer.lorebook_engine import (
+    ENTRY_DEFAULTS,
+    clear_regex_cache,
+    evaluate,
+    get_regex_cache_stats,
+    invalidate_regex_cache,
+    normalize_entry,
+)
 
 
 def entry(uid=1, **overrides):
@@ -675,3 +682,121 @@ def test_active_sticky_admitted_before_higher_order_normal_under_tight_budget():
     result = evaluate(entries, chat("absent"), {"budgetTokens": 3}, effects=effects, message_count=2)
     assert ids(result) == [2]
     assert rejected(result)[1] == "budget"
+
+
+def test_key_regex_switch_matches_pattern_and_literal_when_off():
+    pattern = r"我已经\s*\d+\s*秒没听到.+的故事了"
+    regex_entry = entry(1, key=[pattern], keyRegex=True, content="定型文解释")
+    literal_entry = entry(2, key=[pattern], keyRegex=False, content="字面解释")
+    default_entry = entry(3, key=[pattern], content="默认字面解释")
+
+    hit = evaluate([regex_entry, literal_entry, default_entry], chat("我已经 30 秒没听到 abc 的故事了"))
+    assert ids(hit) == [1]
+    assert rejected(hit) == {2: "no-match", 3: "no-match"}
+    assert hit["diagnostics"] == []
+
+    # When the literal regex source string itself is sent, literal entries match too.
+    literal_hit = evaluate([literal_entry, default_entry], chat(pattern))
+    assert ids(literal_hit) == [2, 3]
+
+
+@pytest.mark.parametrize("global_case,local_case,text,expected", [
+    (False, None, "我已经 30 秒没听到 ABC 的故事了", True),
+    (False, False, "我已经 30 秒没听到 ABC 的故事了", True),
+    (True, None, "我已经 30 秒没听到 ABC 的故事了", False),
+    (True, None, "我已经 30 秒没听到 abc 的故事了", True),
+    (False, True, "我已经 30 秒没听到 ABC 的故事了", False),
+    (True, False, "我已经 30 秒没听到 ABC 的故事了", True),
+])
+def test_key_regex_case_sensitive_controls_i_flag_and_ignores_whole_words(global_case, local_case, text, expected):
+    e = entry(
+        1,
+        key=[r"我已经\s*\d+\s*秒没听到\s*abc\s*的故事了"],
+        keyRegex=True,
+        caseSensitive=local_case,
+        matchWholeWords=True,
+    )
+    res = evaluate([e], chat(text), {"caseSensitive": global_case, "matchWholeWords": True})
+    assert bool(ids(res)) is expected
+
+    # Verify matchWholeWords=True does NOT block substring regex matches inside words.
+    sub = entry(2, key=[r"cat\d+"], keyRegex=True, matchWholeWords=True)
+    assert ids(evaluate([sub], chat("supercat42pro"), {"matchWholeWords": True})) == [2]
+
+
+def test_key_regex_invalid_pattern_falls_back_to_literal_and_records_diagnostics():
+    clear_regex_cache()
+    # Entry 1 has an invalid regex key and a valid regex key; entry 2 has only an invalid regex key.
+    e1 = entry(1, key=["[unclosed", r"story\s+\d+"], keyRegex=True)
+    e2 = entry(2, key=["(?P<broken"], keyRegex=True)
+
+    # 1) Neither matches literal, but e1 matches via its second valid regex key; no exception raised.
+    res1 = evaluate([e1, e2], chat("tell me story 99"))
+    assert ids(res1) == [1]
+    reasons = {(d["uid"], d["key"]): (d["reason"], d["fallback"]) for d in res1["diagnostics"]}
+    assert reasons[(1, "[unclosed")] == ("invalid-regex", "literal")
+    assert reasons[(2, "(?P<broken")] == ("invalid-regex", "literal")
+
+    # 2) Invalid regex falls back to literal matching (respecting caseSensitive).
+    res2 = evaluate([e2], chat("here is (?p<broken literal text"))
+    assert ids(res2) == [2]
+    assert len(res2["diagnostics"]) == 1
+    assert res2["diagnostics"][0]["reason"] == "invalid-regex"
+    assert res2["diagnostics"][0]["fallback"] == "literal"
+
+
+def test_key_regex_compilation_cache_hit_and_invalidation():
+    clear_regex_cache()
+    e = entry(1, world="bookA", key=[r"我已经\s*\d+\s*秒没听到.+的故事了"], keyRegex=True)
+
+    for n in (5, 30, 120):
+        res = evaluate([e], chat(f"我已经 {n} 秒没听到 ruanruan 的故事了"))
+        assert ids(res) == [1]
+
+    stats = get_regex_cache_stats()
+    assert stats["compiles"] == 1
+    assert stats["hits"] == 2
+    assert stats["misses"] == 1
+
+    # Modifying the entry's key or caseSensitive invalidates its old cached pattern.
+    e_modified = {**e, "key": [r"全新的正则\s*\d+"]}
+    assert ids(evaluate([e_modified], chat("全新的正则 42"))) == [1]
+    stats_after_edit = get_regex_cache_stats()
+    assert stats_after_edit["compiles"] == 2
+    assert stats_after_edit["invalidations"] >= 1
+
+    # Explicit store-level invalidation also evicts cached patterns.
+    removed = invalidate_regex_cache(world="bookA", uid=1)
+    assert removed == 1
+    assert ids(evaluate([e_modified], chat("全新的正则 42"))) == [1]
+    assert get_regex_cache_stats()["compiles"] == 3
+
+
+def test_key_regex_catastrophic_backtracking_defenses():
+    clear_regex_cache()
+    # Defense 1: nested quantifiers such as (a+)+$ are rejected statically without hanging.
+    evil = entry(1, key=[r"(a+)+$"], keyRegex=True)
+    attack_text = "a" * 32 + "!"
+    res_evil = evaluate([evil], chat(attack_text))
+    assert not ids(res_evil)
+    assert len(res_evil["diagnostics"]) == 1
+    assert res_evil["diagnostics"][0]["reason"] == "unsafe-regex"
+    assert res_evil["diagnostics"][0]["fallback"] == "literal"
+    # Literal fallback still works if the literal string `(a+)+$` appears in text.
+    assert ids(evaluate([evil], chat("literal (a+)+$ in message"))) == [1]
+
+    # Defense 2: overly long regex pattern is rejected and falls back to literal.
+    long_pat = "a" * 505
+    too_long = entry(2, key=[long_pat], keyRegex=True)
+    res_long = evaluate([too_long], chat("short"))
+    assert not ids(res_long)
+    assert res_long["diagnostics"][0]["reason"] == "regex-too-long"
+    assert res_long["diagnostics"][0]["fallback"] == "literal"
+
+    # Defense 3: per-turn regex scan time budget skips remaining regex keys when exhausted.
+    budget_entry = entry(3, key=[r"alpha\d+"], keyRegex=True)
+    res_timeout = evaluate([budget_entry], chat("alpha123"), {"maxRegexScanMs": 0})
+    assert not ids(res_timeout)
+    assert res_timeout["diagnostics"][0]["reason"] == "regex-scan-timeout"
+    assert res_timeout["diagnostics"][0]["fallback"] == "skipped"
+
