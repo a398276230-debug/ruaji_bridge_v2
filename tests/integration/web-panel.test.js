@@ -115,10 +115,37 @@ test('面板前端暴露群聊白名单输入框并接入保存载荷', async ()
   await withPanel({}, async ({ base }) => {
     const html = await (await fetch(`${base}/`)).text();
     assert.match(html, /id="cfg-group-whitelist"/, '首页应有群聊白名单输入框');
+    assert.match(html, /id="cfg-lorebook-default-book"/, '首页应有默认维护目标世界书输入框');
 
     const appJs = await (await fetch(`${base}/app.js`)).text();
     assert.ok(appJs.includes('#cfg-group-whitelist'), '前端应读写该输入框');
+    assert.ok(appJs.includes('#cfg-lorebook-default-book'), '前端应读写默认目标世界书输入框');
     assert.match(appJs, /groupWhitelist/, '保存载荷应带上 groupWhitelist');
+    assert.match(appJs, /defaultTargetBook/, '保存载荷应带上 defaultTargetBook');
+  });
+});
+
+test('世界书默认目标书配置：面板读写、热更新与非法值拦截', async () => {
+  await withPanel({}, async ({ container, base, get }) => {
+    const put = (body) => fetch(`${base}/api/config`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    assert.equal((await get('/api/config')).body.config.lorebook.defaultTargetBook, '');
+
+    assert.equal((await put({ lorebook: { defaultTargetBook: '  群聊黑话词典  ' } })).status, 200);
+    assert.equal(container.config.lorebook.defaultTargetBook, '群聊黑话词典');
+    assert.equal((await get('/api/config')).body.config.lorebook.defaultTargetBook, '群聊黑话词典');
+    assert.equal(JSON.parse(fs.readFileSync(container.config.paths.configFile, 'utf8')).lorebook.defaultTargetBook, '群聊黑话词典');
+
+    assert.equal((await put({ lorebook: { defaultTargetBook: 2 } })).status, 200);
+    assert.equal(container.config.lorebook.defaultTargetBook, 2);
+    assert.equal((await get('/api/config')).body.config.lorebook.defaultTargetBook, 2);
+
+    for (const bad of [0, -1, 1.5, true, false, null, [], {}]) {
+      const res = await put({ lorebook: { defaultTargetBook: bad } });
+      assert.equal(res.status, 400);
+      assert.equal(container.config.lorebook.defaultTargetBook, 2);
+    }
   });
 });
 

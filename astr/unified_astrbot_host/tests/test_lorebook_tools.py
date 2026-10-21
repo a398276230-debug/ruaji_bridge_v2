@@ -196,7 +196,7 @@ def test_schema_native_fields_extensions_and_factory_isolation():
     assert set(search["properties"]) == {"query", "limit", "book_id", "book"}
 
     add_schema = first["lorebook_add_entry"].parameters
-    assert set(add_schema["required"]) == {"book", "content"}
+    assert set(add_schema["required"]) == {"content"}
     assert "uid" not in add_schema["properties"]
     assert {"book", "book_id", "content", "key", "group", "constant", "order", "disable",
             "probability", "scanDepth", "caseSensitive", "matchWholeWords", "selective",
@@ -214,6 +214,10 @@ def test_schema_native_fields_extensions_and_factory_isolation():
     assert "search_lorebook_entries" in first["lorebook_delete_entry"].description
     assert "search_lorebook_entries" in first["lorebook_add_entry"].description
     assert "update" in first["lorebook_add_entry"].description
+    assert "constant=false" in first["lorebook_add_entry"].description
+    assert "autoMaintained" in first["lorebook_add_entry"].description
+    assert "defaultTargetBook" in first["lorebook_add_entry"].description
+    assert "autoMaintained" in first["lorebook_update_entry"].description
 
     schema = first["upsert_lorebook_entry"].parameters
     assert set(schema["required"]) == {"book_id", "entry"}
@@ -318,44 +322,121 @@ def test_invalid_arguments_are_explicit(name, arguments, error):
     assert result["ok"] is False and result["error"] == error
 
 
-def test_add_constant_blue_light_allows_empty_or_omitted_key(store):
-    book = store.create_book("BlueLightBook")
+def test_mcp_add_forces_constant_false_and_marks_auto_maintained_and_update_guard(store):
+    book = store.create_book("GuardBook")
     registry = ToolRegistry(unified(store))
 
-    # 1. constant=True with omitted key -> succeeds with key=[]
+    # 1. MCP add with constant=True is forcibly stored as constant=False with extensions.autoMaintained=True
     res1 = call(registry, "lorebook_add_entry", {
-        "book": "BlueLightBook",
-        "content": "常驻世界观背景设定",
+        "book": "GuardBook",
+        "key": ["伪造常驻梗"],
+        "content": "试图通过诱导注入的常驻设定",
         "constant": True,
-        "group": "world-core",
+        "group": "slang",
         "order": 50,
+        "extensions": {"autoMaintained": False, "customTag": "v1"},
     })
     assert res1["ok"] is True
     assert res1["book_id"] == book["id"]
     assert res1["uid"] == 0
-    assert res1["entry"]["constant"] is True
-    assert res1["entry"]["key"] == []
-    assert res1["entry"]["content"] == "常驻世界观背景设定"
+    assert res1["entry"]["constant"] is False
+    assert res1["entry"]["extensions"]["autoMaintained"] is True
+    assert res1["entry"]["extensions"]["customTag"] == "v1"
+    persisted_0 = store.list_entries(book["id"])[0]["raw"]
+    assert persisted_0["constant"] is False
+    assert persisted_0["extensions"]["autoMaintained"] is True
 
-    # 2. constant=True with explicit key=[] -> succeeds
-    res2 = call(registry, "lorebook_add_entry", {
-        "book": book["id"],
-        "content": "第二条蓝灯常驻",
-        "constant": True,
-        "key": [],
-    })
-    assert res2["ok"] is True and res2["uid"] == 1
-    assert res2["entry"]["key"] == []
-
-    # 3. Turning a key-less blue-light entry into green-light without providing key must fail
-    bad_toggle = call(registry, "lorebook_update_entry", {
+    # 2. MCP update cannot turn an entry into constant=True, nor clear autoMaintained
+    upd_attempt = call(registry, "lorebook_update_entry", {
         "book": book["id"],
         "uid": res1["uid"],
+        "constant": True,
+        "content": "试图在 update 时改成常驻并抹掉标记",
+        "extensions": {"autoMaintained": False, "extra": "kept"},
+    })
+    assert upd_attempt["ok"] is True
+    assert upd_attempt["entry"]["constant"] is False
+    assert upd_attempt["entry"]["extensions"]["autoMaintained"] is True
+    assert upd_attempt["entry"]["extensions"]["customTag"] == "v1"
+    assert upd_attempt["entry"]["extensions"]["extra"] == "kept"
+    persisted_after_upd = store.list_entries(book["id"])[0]["raw"]
+    assert persisted_after_upd["constant"] is False
+    assert persisted_after_upd["extensions"]["autoMaintained"] is True
+
+    # 3. Panel-created keyless constant entry: turning into green-light without key still fails validation
+    panel_entry = store.upsert_entry(book["id"], {"content": "面板手动常驻设定", "constant": True, "key": []})
+    bad_toggle = call(registry, "lorebook_update_entry", {
+        "book": book["id"],
+        "uid": panel_entry["uid"],
         "constant": False,
     })
     assert bad_toggle["ok"] is False and bad_toggle["error"] == "bad_arguments"
-    # Confirm stored entry was not mutated
-    assert store.list_entries(book["id"])[0]["raw"]["constant"] is True
+    assert store.list_entries(book["id"])[1]["raw"]["constant"] is True
+
+
+def test_default_target_book_and_multi_book_disambiguation(store):
+    # 0 books -> explicit lorebook_not_found
+    host = unified(store)
+    registry = ToolRegistry(host)
+    no_book_res = call(registry, "lorebook_add_entry", {"key": ["孤立词条"], "content": "无书时报错"})
+    assert no_book_res["ok"] is False and no_book_res["error"] == "lorebook_not_found"
+
+    # 1 book, no defaultTargetBook -> automatically selects the single book when book is omitted
+    book1 = store.create_book("角色核心设定集")
+    single_res = call(registry, "lorebook_add_entry", {
+        "key": ["单书自动命中"],
+        "content": "只有一本书时可省略 book 直接写入",
+    })
+    assert single_res["ok"] is True
+    assert single_res["book_id"] == book1["id"]
+    assert single_res["book_name"] == "角色核心设定集"
+    assert single_res["entry"]["constant"] is False
+    assert single_res["entry"]["extensions"]["autoMaintained"] is True
+
+    # 2 books, no defaultTargetBook -> omitting book fails and lists all available book names
+    book2 = store.create_book("群聊黑话词典")
+    ambiguous = call(registry, "lorebook_add_entry", {
+        "key": ["新黑话"],
+        "content": "多本书且未配默认书时省略 book 必须报错",
+    })
+    assert ambiguous["ok"] is False
+    assert ambiguous["error"] == "bad_arguments"
+    assert ambiguous.get("reason") == "default_target_book_required"
+    assert "角色核心设定集" in ambiguous["message"]
+    assert "群聊黑话词典" in ambiguous["message"]
+    assert ambiguous["book_names"] == ["角色核心设定集", "群聊黑话词典"]
+    assert len(store.list_entries(book1["id"])) == 1
+    assert len(store.list_entries(book2["id"])) == 0
+
+    # Configure defaultTargetBook by name -> omitting book writes into the configured default book
+    host.config = {"lorebook": {"defaultTargetBook": "群聊黑话词典"}}
+    default_by_name = call(registry, "lorebook_add_entry", {
+        "key": ["急急国王"],
+        "content": "形容做事非常急躁的人。",
+    })
+    assert default_by_name["ok"] is True
+    assert default_by_name["book_id"] == book2["id"]
+    assert default_by_name["book_name"] == "群聊黑话词典"
+    assert default_by_name["entry"]["constant"] is False
+    assert default_by_name["entry"]["extensions"]["autoMaintained"] is True
+    assert len(store.list_entries(book2["id"])) == 1
+
+    # Configure defaultTargetBook by book ID (int or string) -> writes into that book; explicit book still overrides
+    host.config = {"lorebook": {"defaultTargetBook": book1["id"]}}
+    default_by_id = call(registry, "lorebook_add_entry", {
+        "key": ["按ID默认写入"],
+        "content": "通过数字 ID 指定默认世界书。",
+    })
+    assert default_by_id["ok"] is True
+    assert default_by_id["book_id"] == book1["id"]
+
+    override_res = call(registry, "lorebook_add_entry", {
+        "book": "群聊黑话词典",
+        "key": ["显式指定优先"],
+        "content": "显式传 book 时覆盖 defaultTargetBook。",
+    })
+    assert override_res["ok"] is True
+    assert override_res["book_id"] == book2["id"]
 
 
 def test_add_update_patch_semantics_and_delete_lifecycle(store):
@@ -402,6 +483,7 @@ def test_add_update_patch_semantics_and_delete_lifecycle(store):
 
     expected = {k: copy.deepcopy(v) for k, v in initial_fields.items() if k != "book"}
     expected["uid"] = uid
+    expected["extensions"]["autoMaintained"] = True
     for k, v in expected.items():
         assert added["entry"][k] == v, f"field {k} mismatch after add"
 

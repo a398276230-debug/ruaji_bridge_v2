@@ -58,7 +58,11 @@ ENTRY_FIELD_PROPERTIES: dict[str, Any] = {
     },
     "constant": {
         "type": "boolean",
-        "description": "可选。是否蓝灯常驻（默认 false 为绿灯关键词触发；true 为常驻激活，不要求 key 非空）。",
+        "description": (
+            "可选。是否蓝灯常驻（默认 false 为绿灯关键词触发）。"
+            "【硬护栏】经 MCP 工具新建或更新条目时禁止设为常驻（传入 constant=true 也会被强制写为 false），"
+            "常驻（constant=true）仅限在 Web 面板手工编辑开启。"
+        ),
     },
     "vectorized": {
         "type": "boolean",
@@ -220,7 +224,11 @@ ENTRY_SCHEMA: dict[str, Any] = {
 BOOK_SELECTOR_PROPERTIES: dict[str, Any] = {
     "book": {
         "type": ["integer", "string"],
-        "description": "目标世界书的 ID（正整数）或书名（非空字符串）。可与 book_id 二选一。",
+        "description": (
+            "目标世界书的 ID（正整数）或书名（非空字符串）。可与 book_id 二选一；"
+            "在 lorebook_add_entry 中可省略（不传时使用配置的 lorebook.defaultTargetBook，"
+            "或当仅有一本世界书时自动选中；多本书且未配默认书时必须显式指定）。"
+        ),
     },
     "book_id": {
         "type": ["integer", "string"],
@@ -266,7 +274,7 @@ ADD_SCHEMA: dict[str, Any] = {
         **copy.deepcopy(BOOK_SELECTOR_PROPERTIES),
         **copy.deepcopy(_MUTABLE_ENTRY_PROPERTIES),
     },
-    "required": ["book", "content"],
+    "required": ["content"],
     "additionalProperties": False,
 }
 
@@ -343,9 +351,106 @@ def _resolve_single_book_selector(books: list[dict[str, Any]], selector: Any, la
         for b in books:
             if str(b.get("name") or "").strip().casefold() == folded:
                 return b, None
+        if name.isascii() and name.isdecimal():
+            num_id = int(name)
+            if num_id > 0:
+                for b in books:
+                    if b["id"] == num_id:
+                        return b, None
         return None, {"ok": False, "error": "lorebook_not_found", "message": f"book '{name}' not found"}
 
     return None, _bad_arguments(f"{label} must be a positive integer ID or a non-empty book name string")
+
+
+def _configured_default_target_book(unified: Any) -> Any:
+    """Resolve lorebook.defaultTargetBook from host config (or bridge.config.json fallback on real host)."""
+    cfg = getattr(unified, "config", None)
+    if isinstance(cfg, dict):
+        lb_cfg = cfg.get("lorebook")
+        if isinstance(lb_cfg, dict):
+            raw = lb_cfg.get("defaultTargetBook", lb_cfg.get("default_target_book"))
+            if type(raw) is int:
+                return raw
+            if isinstance(raw, str):
+                if raw.strip():
+                    return raw.strip()
+            elif raw is not None:
+                return raw
+
+    # When running inside a real UnifiedContext (has data_root) and host config left defaultTargetBook empty,
+    # allow hot-reading bridge.config.json saved by the web panel.
+    if getattr(unified, "data_root", None):
+        try:
+            import os
+            bridge_cfg_path = os.path.abspath(
+                os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "bridge.config.json")
+            )
+            if os.path.isfile(bridge_cfg_path):
+                with open(bridge_cfg_path, "r", encoding="utf-8") as fh:
+                    bdata = json.load(fh)
+                b_lb = bdata.get("lorebook") if isinstance(bdata, dict) else None
+                if isinstance(b_lb, dict):
+                    b_raw = b_lb.get("defaultTargetBook", b_lb.get("default_target_book"))
+                    if type(b_raw) is int:
+                        return b_raw
+                    if isinstance(b_raw, str) and b_raw.strip():
+                        return b_raw.strip()
+        except Exception:
+            pass
+    return None
+
+
+def _resolve_add_target_book(
+    unified: Any,
+    books: list[dict[str, Any]],
+    book: Any = None,
+    book_id: Any = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Resolve target book for lorebook_add_entry: explicit arg > defaultTargetBook > single book > error with book list."""
+    if book is not None or book_id is not None:
+        return _resolve_book(books, book=book, book_id=book_id, required=True)
+
+    book_names = [str(b.get("name") or "") for b in books]
+    available_books = [
+        {"id": b["id"], "name": b["name"], "enabled": bool(b.get("enabled", True))}
+        for b in books
+    ]
+
+    default_selector = _configured_default_target_book(unified)
+    if default_selector is not None:
+        resolved, err = _resolve_single_book_selector(books, default_selector, "defaultTargetBook")
+        if err is not None:
+            return None, {
+                **err,
+                "defaultTargetBook": default_selector,
+                "book_names": book_names,
+                "available_books": available_books,
+            }
+        return resolved, None
+
+    if len(books) == 1:
+        return books[0], None
+
+    if len(books) == 0:
+        return None, {
+            "ok": False,
+            "error": "lorebook_not_found",
+            "message": "当前没有任何世界书，请先创建世界书后再新建条目。",
+            "book_names": [],
+            "available_books": [],
+        }
+
+    return None, {
+        "ok": False,
+        "error": "bad_arguments",
+        "reason": "default_target_book_required",
+        "message": (
+            f"未配置默认目标世界书（lorebook.defaultTargetBook），且当前存在多本世界书（可选书名: {', '.join(book_names)}）；"
+            "请显式传入 book（书名或 ID）指定写入哪本世界书。"
+        ),
+        "book_names": book_names,
+        "available_books": available_books,
+    }
 
 
 def _resolve_book(
@@ -523,9 +628,12 @@ def build_lorebook_tools(unified: Any, tool_type: Callable[..., Any]) -> list[An
             if sec_err is not None:
                 return _bad_arguments(sec_err)
 
+        if "extensions" in optional_fields and type(optional_fields["extensions"]) is not dict:
+            return _bad_arguments("extensions must be an object")
+
         try:
             books = store.list_books()
-            target_book, err = _resolve_book(books, book=book, book_id=book_id, required=True)
+            target_book, err = _resolve_add_target_book(unified, books, book=book, book_id=book_id)
             if err is not None:
                 return err
             assert target_book is not None
@@ -559,6 +667,12 @@ def build_lorebook_tools(unified: Any, tool_type: Callable[..., Any]) -> list[An
             }
             for field_name, field_value in optional_fields.items():
                 entry_payload[field_name] = copy.deepcopy(field_value)
+
+            # 硬护栏：经 MCP 新建的条目一律强制 constant=False（禁止设常驻），并标记 extensions.autoMaintained=True
+            entry_payload["constant"] = False
+            ext = copy.deepcopy(entry_payload.get("extensions")) if isinstance(entry_payload.get("extensions"), dict) else {}
+            ext["autoMaintained"] = True
+            entry_payload["extensions"] = ext
 
             saved = store.upsert_entry(target_book["id"], entry_payload)
         except (ValueError, TypeError) as exc:
@@ -617,6 +731,9 @@ def build_lorebook_tools(unified: Any, tool_type: Callable[..., Any]) -> list[An
             if sec_err is not None:
                 return _bad_arguments(sec_err)
 
+        if "extensions" in patch_fields and type(patch_fields["extensions"]) is not dict:
+            return _bad_arguments("extensions must be an object")
+
         try:
             books = store.list_books()
             target_book, err = _resolve_book(books, book=book, book_id=book_id, required=True)
@@ -633,8 +750,23 @@ def build_lorebook_tools(unified: Any, tool_type: Callable[..., Any]) -> list[An
                 }
 
             existing_raw = existing["raw"]
-            effective_constant = patch_fields.get("constant", existing_raw.get("constant", False))
-            effective_key = patch_fields.get("key", existing_raw.get("key", []))
+            effective_patch = copy.deepcopy(patch_fields)
+            # 硬护栏 1：MCP 通道不允许把条目改成常驻（constant=True 强制覆写为 False）
+            if effective_patch.get("constant") is True:
+                effective_patch["constant"] = False
+
+            # 硬护栏 2：MCP 通道不允许清掉 autoMaintained 标记
+            existing_ext = existing_raw.get("extensions") if isinstance(existing_raw.get("extensions"), dict) else {}
+            patch_ext = effective_patch.get("extensions")
+            if existing_ext.get("autoMaintained") is True or (
+                isinstance(patch_ext, dict) and "autoMaintained" in patch_ext
+            ):
+                merged_patch_ext = copy.deepcopy(patch_ext) if isinstance(patch_ext, dict) else {}
+                merged_patch_ext["autoMaintained"] = True
+                effective_patch["extensions"] = merged_patch_ext
+
+            effective_constant = effective_patch.get("constant", existing_raw.get("constant", False))
+            effective_key = effective_patch.get("key", existing_raw.get("key", []))
             if not effective_constant:
                 key_err = _validate_keyword_list(effective_key, "key", allow_empty_list=False)
                 if key_err is not None:
@@ -642,7 +774,7 @@ def build_lorebook_tools(unified: Any, tool_type: Callable[..., Any]) -> list[An
                         "green-light (constant=False) entry requires at least one non-empty keyword in key"
                     )
 
-            patch_payload = copy.deepcopy(patch_fields)
+            patch_payload = effective_patch
             patch_payload["uid"] = uid
             saved = store.upsert_entry(target_book["id"], patch_payload)
         except (ValueError, TypeError) as exc:
@@ -739,10 +871,12 @@ def build_lorebook_tools(unified: Any, tool_type: Callable[..., Any]) -> list[An
             description=(
                 "向指定世界书新建一条 World Info 条目，自动分配并返回新条目的 uid。"
                 "【注意】新建前先 search_lorebook_entries 查重，已存在请用 update（lorebook_update_entry）修改，不要重复新建。"
-                "必填参数：book（世界书 ID 或书名，也可传 book_id）、content（非空正文）；"
-                "绿灯条目（默认 constant=false）必须提供至少包含 1 个非空关键词的 key 列表；"
-                "蓝灯常驻条目（constant=true）key 可传空列表 [] 或省略。"
-                "可选支持 group、constant、order、disable、probability、scanDepth、caseSensitive、"
+                "参数：content（必填，非空正文）、key（主关键词列表，至少 1 个非空关键词）；"
+                "book（可选，世界书 ID 或书名，也可传 book_id；省略时优先使用 lorebook.defaultTargetBook 默认目标书，"
+                "未配默认书时若仅有一本世界书则自动选中，多本世界书时报错并列出可选书名）。"
+                "【硬护栏】经 MCP 工具新建的条目一律强制 constant=false（禁止设置蓝灯常驻），"
+                "并自动在 extensions 中标记 autoMaintained=true；仅 Web 面板手工编辑可设置常驻。"
+                "可选支持 group、order、disable、probability、scanDepth、caseSensitive、"
                 "matchWholeWords、selective、selectiveLogic、keysecondary、comment、extensions 等字段。"
                 "成功返回 {ok: true, book_id, uid, entry}；若 key 命中已有条目，会额外返回 duplicate_of 列表提示。"
             ),
@@ -756,7 +890,9 @@ def build_lorebook_tools(unified: Any, tool_type: Callable[..., Any]) -> list[An
                 "必填 book（世界书 ID 或书名，也可传 book_id）与 uid（目标条目编号，可先用 search_lorebook_entries 查询）。"
                 "只修改本次传入的字段，未传入的字段（包括原生的 position/depth/role 及未触碰的扩展属性）严格保持原值，"
                 "绝不会把未传字段重置为默认值；extensions 对象会按字典递归合并。"
-                "支持修改 key、content、group、constant、order、disable、probability、scanDepth、"
+                "【硬护栏】MCP 通道不允许将条目改为蓝灯常驻（constant=true 会被强制覆写为 false），"
+                "也不允许清除 extensions.autoMaintained 标记；常驻仅限在 Web 面板手工开启。"
+                "支持修改 key、content、group、order、disable、probability、scanDepth、"
                 "caseSensitive、matchWholeWords、selective、selectiveLogic、keysecondary、comment、extensions 等字段。"
                 "成功返回 {ok: true, book_id, uid, entry}。"
             ),

@@ -354,6 +354,11 @@
               <option value="on">已启用</option>
               <option value="off">已禁用</option>
             </select>
+            <select id="lb-source" aria-label="来源过滤">
+              <option value="all">全部来源</option>
+              <option value="auto">仅看自动维护</option>
+              <option value="manual">仅看手动维护</option>
+            </select>
             <select id="lb-sort" aria-label="排序">
               <option value="desc">Order 降序</option>
               <option value="asc">Order 升序</option>
@@ -673,7 +678,15 @@
 
         <div class="cfg-card">
           <div class="cfg-card-header"><span class="cfg-icon">📚</span><h3>世界书</h3></div>
-          <div class="cfg-card-body"><span class="field-desc">原社区梗库已替换为原生世界书编辑器。请在左侧「世界书」页管理多本书、导入导出、全局扫描和预算设置。</span></div>
+          <div class="cfg-card-body">
+            <div class="field-row single">
+              <label>默认维护目标世界书 (lorebook.defaultTargetBook)
+                <input type="text" id="cfg-lorebook-default-book" placeholder="留空 = 单书自动选中，多书要求显式指定（可填书名或正整数 ID）">
+                <span class="field-desc">Agent 自动调用 <code>lorebook_add_entry</code> 未显式传 <code>book</code> 时写入的目标世界书（填书名或 ID）。留空且存在多本世界书时将报错并列出可选书名，防止误写进角色设定集。</span>
+              </label>
+            </div>
+            <span class="field-desc">原社区梗库已替换为原生世界书编辑器。请在左侧「世界书」页管理多本书、按「仅看自动维护」筛选审视条目、导入导出、全局扫描和预算设置。</span>
+          </div>
         </div>
 
         <!-- 卡片 3: 群友性格画像与自动化分析 (Portrayal AI) -->

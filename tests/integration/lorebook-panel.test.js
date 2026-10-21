@@ -616,3 +616,21 @@ test('redesigned console ships the three-pane shell, tooltips and no framework/b
   assert.ok(!html.includes('@import'), 'no remote CSS imports');
   assert.ok(!app.includes("from 'react'") && !app.includes('vue'), 'no framework');
 });
+
+test('autoMaintained source filter isolates MCP auto-maintained entries vs manual entries', async () => {
+  const p = panel();
+  p.books.get(1).entries[9].extensions = { autoMaintained: true };
+  await p.enter();
+  assert.deepEqual(p.ids(), ['8', '7', '9']);
+  assert.match(p.$('#lb-entries').innerHTML, /自动维护/);
+
+  await p.event('#lb-source', 'change', 'auto');
+  assert.deepEqual(p.ids(), ['9'], '仅看自动维护只保留 extensions.autoMaintained=true 的条目');
+
+  await p.event('#lb-source', 'change', 'manual');
+  assert.deepEqual(p.ids(), ['8', '7'], '仅看手动维护排除自动维护条目');
+
+  await p.event('#lb-source', 'change', 'all');
+  assert.deepEqual(p.ids(), ['8', '7', '9']);
+  assert.deepEqual(p.errors, []);
+});

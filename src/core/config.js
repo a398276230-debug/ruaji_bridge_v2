@@ -188,6 +188,7 @@ const DEFAULTS = {
   },
   lorebook: {
     maintenanceHint: true,
+    defaultTargetBook: '',
   },
   reply: {
     sendEnabled: true,
@@ -351,6 +352,7 @@ const ENV_OVERRIDES = [
   ['RUAJI_V2_MEME_MATCHER_BASE_URL', 'meme.matcherBaseUrl', String],
   ['RUAJI_V2_MEME_MATCHER_MODEL', 'meme.matcherModel', String],
   ['RUAJI_V2_LOREBOOK_MAINTENANCE_HINT', 'lorebook.maintenanceHint', toBool],
+  ['RUAJI_V2_LOREBOOK_DEFAULT_TARGET_BOOK', 'lorebook.defaultTargetBook', String],
 ];
 
 function toBool(v) {
@@ -473,12 +475,22 @@ function validate(config) {
   if (config.lorebook !== undefined) {
     if (!isPlainObject(config.lorebook)) {
       errors.push('lorebook 非法（应为配置对象）');
-    } else if (
-      config.lorebook.maintenanceHint !== undefined &&
-      typeof config.lorebook.maintenanceHint !== 'boolean' &&
-      typeof config.lorebook.maintenanceHint !== 'string'
-    ) {
-      errors.push('lorebook.maintenanceHint 非法（应为布尔值或自定义提示字符串）');
+    } else {
+      if (
+        config.lorebook.maintenanceHint !== undefined &&
+        typeof config.lorebook.maintenanceHint !== 'boolean' &&
+        typeof config.lorebook.maintenanceHint !== 'string'
+      ) {
+        errors.push('lorebook.maintenanceHint 非法（应为布尔值或自定义提示字符串）');
+      }
+      const dtb = config.lorebook.defaultTargetBook;
+      if (
+        dtb !== undefined &&
+        typeof dtb !== 'string' &&
+        !(typeof dtb === 'number' && Number.isSafeInteger(dtb) && dtb > 0)
+      ) {
+        errors.push('lorebook.defaultTargetBook 非法（应为书名字符串或正整数 ID）');
+      }
     }
   }
   if (!config.napcat.wsUrl) errors.push('napcat.wsUrl 缺失');

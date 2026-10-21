@@ -100,6 +100,13 @@ class UnifiedContext:
                     for _ba in (_b_identity.get("adminIds") or []):
                         if _ba and str(_ba) not in [str(x) for x in _admin_ids]:
                             _admin_ids.append(str(_ba))
+                    _b_lorebook = _bdata.get("lorebook") or {}
+                    if isinstance(_b_lorebook, dict):
+                        _b_default_book = _b_lorebook.get("defaultTargetBook")
+                        if _b_default_book is not None and str(_b_default_book).strip():
+                            _lb_cfg = config.setdefault("lorebook", {})
+                            if isinstance(_lb_cfg, dict) and not str(_lb_cfg.get("defaultTargetBook") or "").strip():
+                                _lb_cfg["defaultTargetBook"] = _b_default_book
         except Exception as _e:
             logger.warning("同步 bridge.config.json adminIds 失败: %s", _e)
 

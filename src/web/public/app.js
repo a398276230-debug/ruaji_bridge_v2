@@ -1296,12 +1296,15 @@ function filteredLoreEntries() {
   const q = $('#lb-q').value.trim().toLowerCase();
   const group = $('#lb-group').value.trim().toLowerCase();
   const active = $('#lb-active').value;
+  const source = loreById('lb-source')?.value || 'all';
   return lore.entries.filter(({ raw }) => {
     const keys = [...(Array.isArray(raw.key) ? raw.key : []), ...(Array.isArray(raw.keysecondary) ? raw.keysecondary : [])];
     const text = [raw.comment, raw.content, ...keys].join(' ').toLowerCase();
+    const autoMaintained = Boolean(raw.extensions?.autoMaintained);
     return text.includes(q)
       && String(raw.group ?? '').toLowerCase().includes(group)
-      && (active === 'all' || (active === 'off') === Boolean(raw.disable));
+      && (active === 'all' || (active === 'off') === Boolean(raw.disable))
+      && (source === 'all' || (source === 'auto') === autoMaintained);
   }).sort((a, b) => {
     const ao = Number.isFinite(Number(a.raw.order)) ? Number(a.raw.order) : 100;
     const bo = Number.isFinite(Number(b.raw.order)) ? Number(b.raw.order) : 100;
@@ -1316,6 +1319,7 @@ function loreRowMarkup({ uid, raw }) {
     + (keys.length > 3 ? `<span class="key-more">+${keys.length - 3}</span>` : '');
   const constant = Boolean(raw.constant);
   const disabled = Boolean(raw.disable);
+  const autoMaintained = Boolean(raw.extensions?.autoMaintained);
   const order = Number.isFinite(Number(raw.order)) ? Number(raw.order) : 100;
   const lampClass = `${constant ? 'blue lb-constant' : 'green lb-keyword'}${disabled ? ' lb-disabled' : ''}`;
   const lampTitle = constant ? '蓝灯 · 常驻：无需关键词命中（点击改为绿灯）' : '绿灯 · 关键词：命中主关键词后注入（点击改为蓝灯）';
@@ -1324,7 +1328,7 @@ function loreRowMarkup({ uid, raw }) {
     <td class="c-lamp"><button type="button" class="lamp ${lampClass}" data-lb-mode="${uid}" title="${lampTitle}" aria-label="${constant ? '常驻，点击改为关键词' : '关键词，点击改为常驻'}"></button></td>
     <td class="c-name"><button type="button" class="lb-name" data-lb-open="${uid}">
       <span class="lb-name-text">${esc(raw.comment || `条目 #${uid}`)}</span>
-      <span class="lb-name-sub">#${uid}${keys.length ? ` · ${keys.length} 关键词` : ''}${raw.content ? ` · ${String(raw.content).length} 字符` : ''}</span>
+      <span class="lb-name-sub">#${uid}${keys.length ? ` · ${keys.length} 关键词` : ''}${raw.content ? ` · ${String(raw.content).length} 字符` : ''}${autoMaintained ? ' · 自动维护' : ''}</span>
     </button></td>
     <td class="c-keys">${chips || '<span class="key-more">—</span>'}</td>
     <td class="c-group">${esc(raw.group || '—')}</td>
@@ -1602,7 +1606,7 @@ function bindLorebooks() {
 
   $('#lb-raw').oninput = () => { syncLoreRaw(); updateDirtyBadge(); };
   for (const id of ['lb-q', 'lb-group']) loreById(id).oninput = renderLoreEntries;
-  for (const id of ['lb-active', 'lb-sort']) loreById(id).onchange = renderLoreEntries;
+  for (const id of ['lb-active', 'lb-source', 'lb-sort']) loreById(id).onchange = renderLoreEntries;
 
   $('#lb-select-all').onchange = () => {
     const checked = $('#lb-select-all').checked;
@@ -1930,6 +1934,9 @@ async function renderSettings() {
   $('#cfg-meme-matcher-retries').value = d.config.meme?.matcherMaxRetries ?? 2;
   $('#cfg-meme-matcher-candidates').value = d.config.meme?.matcherCandidateCount ?? 10;
 
+  // 3. 世界书默认目标书
+  $('#cfg-lorebook-default-book').value = d.config.lorebook?.defaultTargetBook ?? '';
+
   // 4. 群友性格画像
   $('#cfg-portrayal-enabled').checked = d.config.portrayal?.enabled !== false;
   $('#cfg-portrayal-interval').value = d.config.portrayal?.msgInterval ?? 50;
@@ -2147,6 +2154,10 @@ async function saveSettings() {
         totalCharacterBudget: Number($('#cfg-context-total-budget').value) || 12000,
         perSourceCharacterBudget: Number($('#cfg-context-source-budget').value) || 4000,
         directMediaParts: $('#cfg-context-direct-parts').checked,
+      },
+      lorebook: {
+        ...(loadedConfigData?.lorebook || {}),
+        defaultTargetBook: $('#cfg-lorebook-default-book').value.trim(),
       },
       reply: {
         sendEnabled: $('#cfg-reply-send').checked,

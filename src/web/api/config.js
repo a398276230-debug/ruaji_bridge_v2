@@ -138,6 +138,7 @@ export function createConfigApi(deps) {
         },
         lorebook: {
           maintenanceHint: config.lorebook?.maintenanceHint ?? true,
+          defaultTargetBook: config.lorebook?.defaultTargetBook ?? '',
         },
         reply: {
           sendEnabled: Boolean(config.reply?.sendEnabled),
@@ -307,12 +308,23 @@ export function createConfigApi(deps) {
       if (updates.lorebook !== undefined) {
         if (!updates.lorebook || typeof updates.lorebook !== 'object' || Array.isArray(updates.lorebook)) {
           errors.push('lorebook 必须为配置对象');
-        } else if (
-          Object.hasOwn(updates.lorebook, 'maintenanceHint') &&
-          typeof updates.lorebook.maintenanceHint !== 'boolean' &&
-          typeof updates.lorebook.maintenanceHint !== 'string'
-        ) {
-          errors.push('lorebook.maintenanceHint 必须为布尔值或字符串');
+        } else {
+          if (
+            Object.hasOwn(updates.lorebook, 'maintenanceHint') &&
+            typeof updates.lorebook.maintenanceHint !== 'boolean' &&
+            typeof updates.lorebook.maintenanceHint !== 'string'
+          ) {
+            errors.push('lorebook.maintenanceHint 必须为布尔值或字符串');
+          }
+          if (Object.hasOwn(updates.lorebook, 'defaultTargetBook')) {
+            const dtb = updates.lorebook.defaultTargetBook;
+            if (
+              typeof dtb !== 'string' &&
+              !(typeof dtb === 'number' && Number.isSafeInteger(dtb) && dtb > 0)
+            ) {
+              errors.push('lorebook.defaultTargetBook 必须为书名字符串或正整数 ID');
+            }
+          }
         }
       }
       if (updates.identity) {
@@ -592,11 +604,17 @@ export function createConfigApi(deps) {
       }
 
       if (updates.lorebook) {
+        const nextDefaultBook = Object.hasOwn(updates.lorebook, 'defaultTargetBook')
+          ? (typeof updates.lorebook.defaultTargetBook === 'string'
+              ? updates.lorebook.defaultTargetBook.trim()
+              : updates.lorebook.defaultTargetBook)
+          : (diskConfig.lorebook?.defaultTargetBook ?? config.lorebook?.defaultTargetBook ?? '');
         diskConfig.lorebook = {
           ...(diskConfig.lorebook || {}),
           maintenanceHint: updates.lorebook.maintenanceHint !== undefined
             ? updates.lorebook.maintenanceHint
-            : (diskConfig.lorebook?.maintenanceHint ?? true),
+            : (diskConfig.lorebook?.maintenanceHint ?? config.lorebook?.maintenanceHint ?? true),
+          defaultTargetBook: nextDefaultBook,
         };
       }
 
