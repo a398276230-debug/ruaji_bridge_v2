@@ -46,12 +46,18 @@ export function createHostApi(deps) {
     'GET /api/host/providers': async () => forwardGet('/api/v1/providers'),
     'POST /api/host/providers/update': async ({ body }) => forwardPost('/api/v1/providers/update', body),
     'GET /api/host/plugins-pages': async () => forwardGet('/api/v1/plugins/pages'),
-    // 社区梗库：面板直接读写宿主的 SQLite 梗库，桥接不留第二份副本
-    'GET /api/host/memes': async () => forwardGet('/api/v1/memes?limit=200'),
-    'POST /api/host/memes/upsert': async ({ body }) => forwardPost('/api/v1/memes/upsert', body),
-    'POST /api/host/memes/delete': async ({ body }) => forwardPost('/api/v1/memes/delete', body),
-    'GET /api/host/memes/settings': async () => forwardGet('/api/v1/memes/settings'),
-    'POST /api/host/memes/settings': async ({ body }) => forwardPost('/api/v1/memes/settings', body),
+    // World Info 只有宿主 SQLite 一份事实源。Native payloads travel in
+    // dataText / entryText strings: do not parse those fields here. Object
+    // data/raw fields remain backward-compatible but JS may round large ints.
+    ...Object.fromEntries(['list', 'get', 'export', 'settings'].map((action) => [
+      `GET /api/host/lorebooks/${action}`, async ({ url } = {}) => {
+        const params = new URLSearchParams(url?.searchParams);
+        return forwardGet(`/api/v1/lorebooks/${action}${params.size ? `?${params}` : ''}`);
+      },
+    ])),
+    ...Object.fromEntries(['create', 'update', 'delete', 'entry', 'entry-delete', 'selection', 'import', 'settings'].map((action) => [
+      `POST /api/host/lorebooks/${action}`, async ({ body }) => forwardPost(`/api/v1/lorebooks/${action}`, body),
+    ])),
     'GET /api/host/favour/config': async () => forwardFavour('config', 'GET'),
     'POST /api/host/favour/config': async ({ body }) => forwardFavour('config', 'POST', body),
     'GET /api/host/favour/datarecords': async () => forwardFavour('datarecords', 'GET'),

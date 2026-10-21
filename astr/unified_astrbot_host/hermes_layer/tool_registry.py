@@ -1,6 +1,6 @@
 """hermes_layer.tool_registry —— 导出给 Hermes Agent 的核心记忆与知识图谱工具集。
 
-专注于 LivingMemory 的记忆检索/写入、知识图谱与黑话查询。
+专注于 LivingMemory 的记忆检索/写入、知识图谱与宿主原生世界书工具。
 OneBot 协议端工具链（群文件、历史消息、戳一戳等）已收敛至 Bridge 网关层直连执行。
 """
 
@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from astrbot.core import logger
+
+from hermes_layer.lorebook_tools import build_lorebook_tools
 
 #: 清单协议版本。Hermes 侧按这个值判断拿到的 manifest 能不能直接用。
 MANIFEST_VERSION = 1
@@ -60,7 +62,7 @@ class ToolRegistry:
         self._rebuild()
 
     def _rebuild(self) -> None:
-        """重建工具清单：优先从适配器收集，余下走旧 _build() 兜底。"""
+        """收集插件工具，并始终注册不依赖插件的宿主原生工具。"""
         tools: dict[str, HermesTool] = {}
         adapters = getattr(self._unified, "adapters", None) or []
         adapter_contributed = False
@@ -74,6 +76,9 @@ class ToolRegistry:
             # 向后兼容：无适配器贡献时走旧路径
             for t in self._build():
                 tools[t.name] = t
+        # Native capabilities must not depend on whether an adapter contributed.
+        for t in build_lorebook_tools(self._unified, HermesTool):
+            tools[t.name] = t
         self._tools = tools
 
     # ------------------------------------------------------------------
@@ -179,12 +184,6 @@ class ToolRegistry:
     def _db_manager(self) -> Any | None:
         plugin = self._unified.plugin("self_learning")
         return getattr(plugin, "db_manager", None) if plugin else None
-
-    def _meme_store(self) -> Any | None:
-        store = getattr(self._unified, "meme_store", None)
-        if store is None and hasattr(self._unified, "get_meme_store"):
-            store = self._unified.get_meme_store()
-        return store
 
     def _filtering(self) -> dict[str, Any]:
         mount = self._unified.mounts.get("living_memory")
@@ -308,71 +307,6 @@ class ToolRegistry:
                 },
                 handler=self._query_knowledge_graph,
                 requires=("living_memory",),
-            ),
-            HermesTool(
-                name="search_community_meme",
-                description=(
-                    "按梗名查一个梗的详情：来历、含义、经典例句。系统提示里的「梗雷达」会给出梗名，"
-                    "照抄进来即可。查空说明库里真没有，去联网查证后用 record_community_meme 收录，别瞎编。"
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "梗名或它的别名，如「坐好喽」。只填梗名本身，不要把群友整句原话丢进来——本工具是精确直查，传原话必然查空。",
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "返回条数上限，默认 3。",
-                            "default": 3,
-                        },
-                    },
-                    "required": ["query"],
-                },
-                handler=self._search_community_meme,
-            ),
-            HermesTool(
-                name="record_community_meme",
-                description=(
-                    "向梗数据库录入或更新一条梗/黑话知识。在通过互联网查证确认了新梗含义，"
-                    "或群友教了新梗时调用。会自动进行向量化索引持久化入库。"
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "term": {
-                            "type": "string",
-                            "description": "梗名称/核心词（如「真拿你没办法，坐好喽」或「牢师」）。",
-                        },
-                        "meaning": {
-                            "type": "string",
-                            "description": "梗的含义解释与背景要点。",
-                        },
-                        "origin": {
-                            "type": "string",
-                            "description": "可选。出处渊源（如《咒术回战》、CS2、B站等）。",
-                            "default": "",
-                        },
-                        "examples": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "可选。经典例句、定型文或使用场景列表。",
-                        },
-                        "aliases": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "可选。别名、变体、衍生词、缩写列表。",
-                        },
-                        "tags": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "可选。标签分类（如 [二次元, 咒术回战, 定型文]）。",
-                        },
-                    },
-                    "required": ["term", "meaning"],
-                },
-                handler=self._record_community_meme,
             ),
         ]
 
@@ -638,47 +572,6 @@ class ToolRegistry:
             "relations": relations,
             "statements": statements,
         }
-
-    # ---------- 4. 社区梗库 ----------
-
-    async def _search_community_meme(self, query: str, limit: int = 3) -> dict[str, Any]:
-        """语义检索社区梗库。"""
-        store = self._meme_store()
-        if store is None:
-            return {
-                "ok": False,
-                "error": "meme_store_unavailable",
-                "message": "社区梗数据库尚未初始化",
-                "results": [],
-                "found": False,
-            }
-        return await store.search_meme(query=query, limit=limit)
-
-    async def _record_community_meme(
-        self,
-        term: str,
-        meaning: str,
-        origin: str = "",
-        examples: list[str] | None = None,
-        aliases: list[str] | None = None,
-        tags: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """录入或更新社区梗。"""
-        store = self._meme_store()
-        if store is None:
-            return {
-                "ok": False,
-                "error": "meme_store_unavailable",
-                "message": "社区梗数据库尚未初始化",
-            }
-        return await store.record_meme(
-            term=term,
-            meaning=meaning,
-            origin=origin,
-            examples=examples,
-            aliases=aliases,
-            tags=tags,
-        )
 
     async def _graph_context_for(self, term: str) -> dict[str, Any] | None:
         store = self._graph_store()

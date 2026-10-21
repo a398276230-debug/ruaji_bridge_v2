@@ -74,12 +74,9 @@ plugins:
       enable_group_chat: true
       decision_ai_provider_id: ''
 
-community_memes:
-  # 梗雷达：每轮对话把群友原话与全库比向量，只把命中的梗名注入 slang 槽。
-  # 释义不注入 —— 模型看见梗名会自己调 search_community_meme 查详情。
-  enabled: true
-  inject_limit: 2
-  min_score: 0.45
+# World Info 在 data_root/lorebooks.db 持久化，扫描/预算设置由面板「世界书」管理。
+# 不再读取旧 community_memes 配置，不启动向量预热。旧库通过
+# scripts/migrate-community-memes.py --source .../community_memes.db --data-root ... 显式迁移。
 hermes:
   export_enabled: true
   export_dir: ${HERMES_AGENT_DIR:-F:/hermes-agent}

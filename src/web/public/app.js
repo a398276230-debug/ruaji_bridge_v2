@@ -918,115 +918,379 @@ async function testMemeTag() {
   }
 }
 
-// ============================================================ 社区梗库
+// ============================================================ 世界书
 
-let editingSlangId = null;
+// These are display fallbacks only. Never expand them into stored native JSON.
+const LB_FIELDS = [
+  ['comment', '标题 / 注释', 'text', ''],
+  ['key', '主关键词（每行一项）', 'list', []],
+  ['keysecondary', '次关键词（每行一项）', 'list', []],
+  ['selective', '启用次关键词条件', 'bool', true],
+  ['selectiveLogic', '次关键词逻辑', 'select', 0, [[0, 'AND ANY'], [1, 'NOT ALL'], [2, 'NOT ANY'], [3, 'AND ALL']]],
+  ['content', '正文', 'textarea', ''],
+  ['constant', '蓝色常驻（关闭 = 绿色关键词）', 'bool', false],
+  ['disable', '禁用条目', 'bool', false],
+  ['group', '互斥分组', 'text', ''],
+  ['groupOverride', '分组优先覆盖', 'bool', false],
+  ['groupWeight', '分组权重', 'number', 100],
+  ['order', 'Order 排序（数字）', 'number', 100],
+  ['position', '原生位置（受当前 user 锚点限制）', 'select', 0, [[0, '角色定义前'], [1, '角色定义后'], [2, '作者注释前'], [3, '作者注释后'], [4, '深度 @D'], [5, '示例前'], [6, '示例后'], [7, 'Outlet']]],
+  ['depth', '深度 depth（仅保留 / 当前消息内锚点）', 'number', 4],
+  ['role', '原生角色（不创建独立角色消息）', 'select', 0, [[0, 'System'], [1, 'User'], [2, 'Assistant']]],
+  ['outletName', 'Outlet 名称', 'text', ''],
+  ['probability', '概率 %', 'number', 100],
+  ['useProbability', '使用概率', 'bool', true],
+  ['scanDepth', '扫描深度（空 = 全局）', 'nullableNumber', null],
+  ['caseSensitive', '区分大小写', 'tri', null],
+  ['matchWholeWords', '整词匹配', 'tri', null],
+  ['useGroupScoring', '分组评分', 'tri', null],
+  ['sticky', 'Sticky 持续轮数（空 = 默认）', 'nullableNumber', null],
+  ['cooldown', 'Cooldown 冷却轮数（空 = 默认）', 'nullableNumber', null],
+  ['delay', 'Delay 延迟轮数（空 = 默认）', 'nullableNumber', null],
+  ['delayUntilRecursion', '递归延迟步骤', 'number', 0],
+  ['excludeRecursion', '不由递归触发', 'bool', false],
+  ['preventRecursion', '阻止触发后续递归', 'bool', false],
+  ['ignoreBudget', '忽略预算', 'bool', false],
+  ['vectorized', '原生向量标记（保留）', 'bool', false],
+  ['addMemo', '附加注释标记', 'bool', false],
+  ...['matchPersonaDescription', 'matchCharacterDescription', 'matchCharacterPersonality', 'matchCharacterDepthPrompt', 'matchScenario', 'matchCreatorNotes'].map((key) => [key, `扫描 ${key}`, 'bool', false]),
+  ['automationId', 'Automation ID', 'text', ''],
+  ['characterFilterNames', '角色名称过滤（每行一项）', 'list', []],
+  ['characterFilterTags', '角色标签过滤（每行一项）', 'list', []],
+  ['characterFilterExclude', '排除匹配角色', 'bool', false],
+  ['triggers', '触发类型（每行一项）', 'list', []],
+];
+const LB_SETTINGS = [
+  ['enabled', '世界书总开关', 'bool', true],
+  ['scanDepth', '扫描深度', 'number', 2],
+  ['recursive', '递归扫描', 'bool', true],
+  ['maxRecursionSteps', '最大递归步骤', 'number', 8],
+  ['budgetTokens', 'Token 预算', 'number', 2048],
+  ['caseSensitive', '区分大小写', 'bool', false],
+  ['matchWholeWords', '整词匹配', 'bool', false],
+  ['useGroupScoring', '分组评分', 'bool', false],
+];
+const lore = { books: [], bookId: null, entries: [], selected: new Set(), editing: null, initial: '', changed: new Set(), invalid: new Set(), settingsDirty: false, busy: false, load: 0 };
 
-const splitList = (raw, sep = /[,，]/) => String(raw || '').split(sep).map((s) => s.trim()).filter(Boolean);
-
-async function renderSlang() {
-  const q = $('#slang-q').value.trim().toLowerCase();
-  const d = await api('/api/host/memes');
-  if (d.ok === false) {
-    $('#slang-hint').textContent = '';
-    $('#slang-grid').innerHTML = `<p class="empty">${esc(d.error || '统一宿主未启动，梗库不可用')}</p>`;
-    return;
-  }
-
-  const all = d.memes || [];
-  // 过滤在前端做：整库就几十条，一次拉全比每敲一个字打一次宿主便宜
-  const items = q
-    ? all.filter((m) => `${m.term} ${(m.aliases || []).join(' ')} ${m.meaning} ${(m.tags || []).join(' ')}`
-        .toLowerCase().includes(q))
-    : all;
-  $('#slang-hint').textContent = `${items.length} / ${all.length} 条`;
-
-  $('#slang-grid').innerHTML = items.length
-    ? items.map((m) => `
-        <div class="meme-card">
-          <div class="meme-body">
-            <div class="meme-header">
-              <div class="meme-tag" title="${esc(m.term)}">${esc(m.term)}</div>
-              ${m.has_vector ? '' : '<span class="meme-cat-badge" title="这条梗还没有向量，梗雷达暂时不会提示它。宿主重启会自动补算，或再保存一次">⚠ 未向量化</span>'}
-            </div>
-            ${(m.aliases || []).length ? `<div class="meme-kw" title="${esc(m.aliases.join(' / '))}">别名：${esc(m.aliases.join(' / '))}</div>` : ''}
-            <div class="meme-desc" title="${esc(m.meaning)}">${esc(m.meaning)}</div>
-            ${m.origin ? `<div class="meme-kw" title="${esc(m.origin)}">出处：${esc(m.origin)}</div>` : ''}
-            <div class="meme-actions">
-              <button class="btn btn-sm ghost btn-slang-edit" data-id="${m.id}" title="编辑梗名、别名、含义与例句">✏️ 编辑</button>
-              <button class="btn btn-sm ghost btn-del btn-slang-del" data-id="${m.id}" title="从梗库中删除">🗑️</button>
-            </div>
-          </div>
-        </div>`).join('')
-    : '<p class="empty">梗库为空，或过滤条件没有命中任何条目</p>';
-
-  $$('#slang-grid .btn-slang-edit').forEach((btn) => {
-    btn.onclick = () => openSlangEditor(items.find((x) => String(x.id) === btn.dataset.id));
-  });
-
-  $$('#slang-grid .btn-slang-del').forEach((btn) => {
-    btn.onclick = async () => {
-      const meme = items.find((x) => String(x.id) === btn.dataset.id);
-      if (!meme || !confirm(`确定要从梗库中删除「${meme.term}」吗？`)) return;
-      try {
-        const res = await api('/api/host/memes/delete', { method: 'POST', body: { id: meme.id } });
-        if (res.ok) { toast('🗑️ 已从梗库删除'); renderSlang(); }
-        else toast(`删除失败：${res.error || '未知错误'}`, true);
-      } catch (e) { toast(`删除异常：${e.message}`, true); }
-    };
-  });
+async function loreApi(action, body, query = '') {
+  const result = await api(`/api/host/lorebooks/${action}${query}`, body === undefined ? undefined : { method: 'POST', body });
+  if (result.ok === false) throw new Error(result.error || '世界书请求失败');
+  return result;
 }
 
-function openSlangEditor(meme) {
-  editingSlangId = meme?.id ?? null;
-  $('#slang-edit-title').textContent = meme ? '✏️ 编辑社区梗' : '＋ 新增社区梗';
-  $('#slang-edit-term').value = meme?.term ?? '';
-  $('#slang-edit-aliases').value = (meme?.aliases || []).join(', ');
-  $('#slang-edit-meaning').value = meme?.meaning ?? '';
-  $('#slang-edit-origin').value = meme?.origin ?? '';
-  $('#slang-edit-examples').value = (meme?.examples || []).join('\n');
-  $('#slang-edit-tags').value = (meme?.tags || []).join(', ');
-  $('#slang-edit-modal').style.display = 'flex';
+// All event promises are caught here, including native JSON / file parsing errors.
+async function loreAction(fn) {
+  if (lore.busy) return;
+  lore.busy = true;
+  updateLoreControls();
+  try { await fn(); }
+  catch (e) { $('#lb-status').textContent = `操作失败：${e.message}`; toast(e.message, true); }
+  finally { lore.busy = false; updateLoreControls(); }
 }
 
-$('#slang-edit-close').onclick = () => { $('#slang-edit-modal').style.display = 'none'; };
-$('#slang-edit-cancel').onclick = () => { $('#slang-edit-modal').style.display = 'none'; };
-$('#slang-edit-save').onclick = async () => {
-  const term = $('#slang-edit-term').value.trim();
-  const meaning = $('#slang-edit-meaning').value.trim();
-  if (!term || !meaning) return toast('梗名与含义解释都不能为空', true);
+function updateLoreControls() {
+  const noBook = lore.bookId == null;
+  for (const id of ['book', 'create', 'import', 'settings-save']) $('#lb-' + id).disabled = lore.busy;
+  for (const id of ['enabled', 'rename', 'delete', 'export', 'new']) $('#lb-' + id).disabled = lore.busy || noBook;
+  for (const id of ['batch-on', 'batch-off']) $('#lb-' + id).disabled = lore.busy || noBook || !lore.selected.size;
+  $('#lb-save').disabled = lore.busy || noBook;
+  $('#lb-entry-delete').disabled = lore.busy || lore.editing == null;
+}
 
-  const btn = $('#slang-edit-save');
-  btn.disabled = true;
-  try {
-    // merge:false —— 面板是整条覆盖。模型侧的 record_community_meme 才走并集追加，
-    // 那边合并是对的；这边合并的话用户永远删不掉一个写错的别名。
-    const res = await api('/api/host/memes/upsert', {
-      method: 'POST',
-      body: {
-        id: editingSlangId,
-        term,
-        meaning,
-        origin: $('#slang-edit-origin').value.trim(),
-        aliases: splitList($('#slang-edit-aliases').value),
-        tags: splitList($('#slang-edit-tags').value),
-        examples: splitList($('#slang-edit-examples').value, '\n'),
-        merge: false,
-      },
-    });
-    if (res.ok) {
-      toast(`💾 梗「${res.term}」已${res.action === 'created' ? '收录' : '更新'}`);
-      $('#slang-edit-modal').style.display = 'none';
-      renderSlang();
-    } else {
-      toast(`保存失败：${res.message || res.error || '未知错误'}`, true);
+function loreDirty() { return !$('#lb-editor').hidden && ($('#lb-raw').value !== lore.initial || lore.invalid.size > 0); }
+function discardLore() { return !loreDirty() || confirm('条目有未保存修改，确定放弃？'); }
+function closeLoreEditor() { $('#lb-editor').hidden = true; lore.editing = null; }
+
+function loreFieldMarkup([key, label, type, fallback, choices], prefix) {
+  const id = `${prefix}${key}`;
+  let control;
+  if (type === 'bool') control = `<input id="${id}" type="checkbox">`;
+  else if (type === 'select' || type === 'tri') {
+    const options = type === 'tri' ? [['', '继承全局'], ['true', '是'], ['false', '否']] : choices;
+    control = `<select id="${id}">${options.map(([value, text]) => `<option value="${value}">${esc(text)}</option>`).join('')}</select>`;
+  } else if (type === 'list' || type === 'textarea') control = `<textarea id="${id}" rows="${type === 'list' ? 3 : 7}"></textarea>`;
+  else control = `<input id="${id}" type="${type.includes('Number') || type === 'number' ? 'number' : 'text'}"${type === 'text' ? '' : ` step="${['probability', 'groupWeight'].includes(key) ? 'any' : '1'}"`}>`;
+  return `<label class="${type === 'bool' ? 'check' : type === 'textarea' ? 'full' : ''}">${esc(label)} <span class="hint">${esc(key)}</span>${control}</label>`;
+}
+
+function fillLoreFields(fields, raw, prefix) {
+  for (const [key, , type, fallback] of fields) {
+    const el = $('#' + prefix + key);
+    const value = raw[key] ?? fallback;
+    if (type === 'bool') el.checked = Boolean(value);
+    else {
+      const text = type === 'list' ? (Array.isArray(value) ? value.join('\n') : String(value)) : value ?? '';
+      // Native future enum values remain visible and are not silently coerced.
+      if (type === 'select' && ![...el.options].some((o) => o.value === String(text))) {
+        const option = document.createElement('option'); option.value = String(text); option.textContent = `原生值 ${text}`; el.appendChild(option);
+      }
+      el.value = String(text);
     }
-  } catch (e) {
-    toast(`保存异常：${e.message}`, true);
-  } finally {
-    btn.disabled = false;
   }
-};
+}
+
+function readLoreField([key, , type], prefix) {
+  const el = $('#' + prefix + key);
+  if (type === 'bool') return el.checked;
+  if (type === 'tri') return el.value === '' ? null : el.value === 'true';
+  if (type === 'list') return el.value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  if (type === 'nullableNumber' && el.value.trim() === '') return null;
+  if (type === 'number' || type === 'nullableNumber' || type === 'select') {
+    const value = Number(el.value);
+    if (!el.value.trim() || !Number.isFinite(value)) throw new Error(`${key} 必须是有限数字`);
+    if (!['probability', 'groupWeight'].includes(key) && !Number.isSafeInteger(value)) throw new Error(`${key} 必须是整数`);
+    return value;
+  }
+  return el.value;
+}
+
+// JSON numbers outside Number's safe integer range must never pass through
+// JSON.parse/stringify as Numbers. Match strings first so numeric-looking text
+// (including escaped quotes) stays text. The marker cannot collide with input.
+function parseLoreJson(text) {
+  // Validate before token replacement (e.g. invalid leading zeroes), and also
+  // check decoded strings so escaped marker-like text cannot collide.
+  const decoded = JSON.stringify(JSON.parse(text));
+  let marker = '__lore_number__';
+  while (text.includes(marker) || decoded.includes(marker)) marker += '_';
+  const protectedText = text.replace(/"(?:[^"\\]|\\.)*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g, (token) => {
+    if (token[0] === '"' || !/^-?\d+$/.test(token) || Number.isSafeInteger(Number(token))) return token;
+    return JSON.stringify(marker + token);
+  });
+  return JSON.parse(protectedText, (key, value) => typeof value === 'string' && value.startsWith(marker)
+    ? BigInt(value.slice(marker.length)) : value);
+}
+
+function stringifyLoreJson(value, space) {
+  if (value === undefined) return undefined;
+  // Pick a marker absent from every ordinary string before replacing BigInts.
+  let marker = '__lore_number__';
+  const strings = JSON.stringify(value, (key, item) => typeof item === 'bigint' ? null : item);
+  while (strings.includes(marker)) marker += '_';
+  const text = JSON.stringify(value, (key, item) => typeof item === 'bigint' ? marker + item : item, space);
+  return text.replace(new RegExp('"' + marker + '(-?\\d+)"', 'g'), '$1');
+}
+
+function parseLoreRaw() {
+  const raw = parseLoreJson($('#lb-raw').value);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('条目 JSON 必须是对象');
+  if (lore.editing != null && Object.hasOwn(raw, 'uid') && raw.uid !== lore.editing) throw new Error('uid 不可更改；请新建条目');
+  return raw;
+}
+
+function trackLoreChanges(raw) {
+  const original = parseLoreJson(lore.initial || '{}');
+  lore.changed.clear();
+  for (const key of new Set([...Object.keys(original), ...Object.keys(raw)])) {
+    if (stringifyLoreJson(original[key]) !== stringifyLoreJson(raw[key])) lore.changed.add(key);
+  }
+}
+
+function syncLoreRaw() {
+  try {
+    const raw = parseLoreRaw();
+    fillLoreFields(LB_FIELDS, raw, 'lb-field-'); trackLoreChanges(raw); lore.invalid.clear();
+    $('#lb-json-error').textContent = ''; return true;
+  }
+  catch (e) { $('#lb-json-error').textContent = e.message; return false; }
+}
+
+function openLoreEditor(entry) {
+  if (lore.busy || !discardLore()) return;
+  lore.editing = entry?.uid ?? null;
+  $('#lb-raw').value = entry?.entryText ?? JSON.stringify(entry?.raw ?? {}, null, 2);
+  lore.initial = $('#lb-raw').value;
+  $('#lb-editor-title').textContent = entry ? `编辑条目 #${entry.uid}` : '新条目（保存后分配 UID）';
+  $('#lb-editor').hidden = false;
+  syncLoreRaw(); updateLoreControls();
+}
+
+function filteredLoreEntries() {
+  const q = $('#lb-q').value.trim().toLowerCase();
+  const group = $('#lb-group').value.trim().toLowerCase();
+  const active = $('#lb-active').value;
+  return lore.entries.filter(({ raw }) => {
+    const text = [raw.comment, raw.content, ...(raw.key || []), ...(raw.keysecondary || [])].join(' ').toLowerCase();
+    return text.includes(q) && String(raw.group ?? '').toLowerCase().includes(group)
+      && (active === 'all' || (active === 'off') === Boolean(raw.disable));
+  }).sort((a, b) => (($('#lb-sort').value === 'asc' ? 1 : -1) * ((a.raw.order ?? 100) - (b.raw.order ?? 100))) || a.uid - b.uid);
+}
+
+function renderLoreEntries() {
+  const items = filteredLoreEntries();
+  $('#lb-count').textContent = `${items.length} / ${lore.entries.length} 条 · 已选 ${lore.selected.size}`;
+  $('#lb-select-all').checked = items.length > 0 && items.every((e) => lore.selected.has(e.uid));
+  $('#lb-select-all').indeterminate = items.some((e) => lore.selected.has(e.uid)) && !$('#lb-select-all').checked;
+  $('#lb-entries').innerHTML = items.map(({ uid, raw }) => `<div class="lb-entry${raw.disable ? ' lb-disabled' : ''}">
+    <label><input type="checkbox" data-lb-select="${uid}" aria-label="选择条目 ${uid}" ${lore.selected.has(uid) ? 'checked' : ''}></label>
+    <button class="btn mini ${raw.constant ? 'lb-constant' : 'lb-keyword'}" data-lb-mode="${uid}" title="切换常驻 / 关键词触发">${raw.constant ? '● 常驻' : '● 关键词'}</button>
+    <button class="btn ghost lb-entry-open" data-lb-open="${uid}">${esc(raw.comment || `条目 #${uid}`)}<small>#${uid} · order ${esc(raw.order ?? 100)} · ${esc(raw.group || '无分组')} · ${raw.disable ? '禁用' : '启用'}</small><small>${esc((raw.key || []).join(' / '))}</small></button>
+    <button class="btn mini" data-lb-active="${uid}">${raw.disable ? '启用' : '禁用'}</button>
+  </div>`).join('') || '<p class="empty">没有条目，或筛选条件无匹配。可新建或导入原生世界书 JSON。</p>';
+  $$('[data-lb-select]').forEach((el) => { el.onchange = () => { const uid = Number(el.dataset.lbSelect); el.checked ? lore.selected.add(uid) : lore.selected.delete(uid); renderLoreEntries(); }; });
+  $$('[data-lb-open]').forEach((el) => { el.onclick = () => openLoreEditor(lore.entries.find((e) => e.uid === Number(el.dataset.lbOpen))); });
+  for (const [attr, field] of [['mode', 'constant'], ['active', 'disable']]) {
+    $$(`[data-lb-${attr}]`).forEach((el) => { el.onclick = () => loreAction(async () => {
+      if (!discardLore()) return;
+      const entry = lore.entries.find((e) => e.uid === Number(el.dataset[attr === 'mode' ? 'lbMode' : 'lbActive']));
+      await loreApi('entry', { bookId: lore.bookId, entry: { uid: entry.uid, [field]: !entry.raw[field] } });
+      closeLoreEditor(); await loadLoreBook(lore.bookId);
+    }); });
+  }
+  updateLoreControls();
+}
+
+async function loadLoreBook(bookId) {
+  const generation = ++lore.load;
+  lore.bookId = bookId; lore.entries = []; lore.selected.clear(); closeLoreEditor(); renderLoreEntries();
+  if (bookId == null) { $('#lb-enabled').checked = false; return; }
+  try {
+    const result = await loreApi('get', undefined, `?bookId=${encodeURIComponent(bookId)}`);
+    if (generation !== lore.load) return;
+    const entries = result.entries ?? result.book?.entries ?? [];
+    lore.entries = Array.isArray(entries) ? entries : Object.entries(entries).map(([uid, raw]) => ({ uid: Number(uid), raw }));
+    $('#lb-enabled').checked = result.book.enabled !== false;
+    $('#lb-status').textContent = `已载入「${result.book.name}」`;
+    renderLoreEntries();
+  } catch (e) {
+    if (generation === lore.load) { lore.bookId = null; $('#lb-status').textContent = `载入失败：${e.message}`; updateLoreControls(); }
+    throw e;
+  }
+}
+
+async function reloadLoreBooks(preferred = lore.bookId) {
+  const result = await loreApi('list'); lore.books = result.books || [];
+  const chosen = lore.books.find((b) => String(b.id) === String(preferred)) || lore.books[0];
+  $('#lb-book').innerHTML = lore.books.map((b) => `<option value="${esc(b.id)}">${esc(b.name)}${b.enabled === false ? '（禁用）' : ''} · ${esc(b.entry_count ?? 0)} 条</option>`).join('') || '<option value="">尚无世界书</option>';
+  $('#lb-book').value = chosen ? String(chosen.id) : '';
+  await loadLoreBook(chosen?.id ?? null);
+}
+
+async function renderLorebooks() {
+  if (!discardLore() || (lore.settingsDirty && !confirm('全局设置未保存，确定重新载入？'))) return;
+  await loreAction(async () => {
+    $('#lb-status').textContent = '正在载入世界书…';
+    await reloadLoreBooks();
+    const result = await loreApi('settings');
+    fillLoreFields(LB_SETTINGS, result.settings || {}, 'lb-setting-'); lore.settingsDirty = false;
+    if (!lore.books.length) $('#lb-status').textContent = '尚无世界书，请新建或导入 JSON。';
+  });
+}
+
+function bindLorebooks() {
+  $('#lb-entry-fields').innerHTML = LB_FIELDS.map((f) => loreFieldMarkup(f, 'lb-field-')).join('');
+  $('#lb-settings-fields').innerHTML = LB_SETTINGS.map((f) => loreFieldMarkup(f, 'lb-setting-')).join('');
+  for (const field of LB_FIELDS) {
+    const el = $('#lb-field-' + field[0]);
+    el.onchange = () => {
+      try {
+        const raw = parseLoreRaw(); raw[field[0]] = readLoreField(field, 'lb-field-');
+        $('#lb-raw').value = stringifyLoreJson(raw, 2); trackLoreChanges(raw); lore.invalid.delete(field[0]);
+        $('#lb-json-error').textContent = lore.invalid.size ? '请修正无效字段，或重新编辑 JSON。' : '';
+      }
+      catch (e) { lore.invalid.add(field[0]); $('#lb-json-error').textContent = e.message; }
+    };
+  }
+  for (const [key] of LB_SETTINGS) $('#lb-setting-' + key).onchange = () => { lore.settingsDirty = true; };
+  $('#lb-raw').oninput = syncLoreRaw;
+  for (const id of ['q', 'group']) $('#lb-' + id).oninput = renderLoreEntries;
+  for (const id of ['active', 'sort']) $('#lb-' + id).onchange = renderLoreEntries;
+  $('#lb-select-all').onchange = () => { const checked = $('#lb-select-all').checked; for (const e of filteredLoreEntries()) checked ? lore.selected.add(e.uid) : lore.selected.delete(e.uid); renderLoreEntries(); };
+  $('#lb-new').onclick = () => { if (lore.bookId != null) openLoreEditor(null); };
+  $('#lb-cancel').onclick = () => { if (!lore.busy && discardLore()) closeLoreEditor(); };
+  $('#lb-book').onchange = () => loreAction(async () => {
+    const id = Number($('#lb-book').value);
+    if (!discardLore()) { $('#lb-book').value = String(lore.bookId); return; }
+    await loadLoreBook(id);
+  });
+  $('#lb-create').onclick = () => loreAction(async () => {
+    const name = prompt('新世界书名称'); if (!name?.trim() || !discardLore()) return;
+    const result = await loreApi('create', { name: name.trim(), enabled: true }); await reloadLoreBooks(result.book.id);
+  });
+  $('#lb-rename').onclick = () => loreAction(async () => {
+    const name = prompt('世界书新名称', lore.books.find((b) => b.id === lore.bookId)?.name || '');
+    if (!name?.trim() || !discardLore()) return;
+    await loreApi('update', { bookId: lore.bookId, name: name.trim() }); await reloadLoreBooks();
+  });
+  $('#lb-enabled').onchange = () => loreAction(async () => {
+    try {
+      const enabled = $('#lb-enabled').checked;
+      await loreApi('update', { bookId: lore.bookId, enabled });
+      const book = lore.books.find((b) => b.id === lore.bookId);
+      if (book) {
+        book.enabled = enabled;
+        const option = [...$('#lb-book').options].find((o) => o.value === String(book.id));
+        if (option) option.textContent = `${book.name}${enabled ? '' : '（禁用）'} · ${book.entry_count ?? 0} 条`;
+      }
+    }
+    catch (e) { $('#lb-enabled').checked = !$('#lb-enabled').checked; throw e; }
+  });
+  $('#lb-delete').onclick = () => loreAction(async () => {
+    if (!confirm('永久删除当前世界书及其全部条目？') || !discardLore()) return;
+    await loreApi('delete', { bookId: lore.bookId }); await reloadLoreBooks(null);
+  });
+  $('#lb-save').onclick = () => loreAction(async () => {
+    const raw = parseLoreRaw();
+    if (lore.invalid.size) throw new Error('请先修正无效字段，或重新编辑 JSON。');
+    trackLoreChanges(raw);
+    // The API deep-merges patches. Only explicit edits are sent, never display defaults.
+    if (lore.editing != null && !lore.changed.size) { closeLoreEditor(); return; }
+    const original = parseLoreJson(lore.initial);
+    function checkRemoved(before, after) {
+      for (const key of Object.keys(before)) {
+        if (!Object.hasOwn(after, key)) throw new Error('接口合并 JSON，不能删除已有字段；请改为空值或保留原字段。');
+        if (before[key] && after[key] && typeof before[key] === 'object' && typeof after[key] === 'object'
+          && !Array.isArray(before[key]) && !Array.isArray(after[key])) checkRemoved(before[key], after[key]);
+      }
+    }
+    checkRemoved(original, raw);
+    const entry = lore.editing == null ? raw : Object.fromEntries([...lore.changed].map((key) => [key, raw[key]]));
+    if (lore.editing != null) entry.uid = lore.editing;
+    const entryText = stringifyLoreJson(entry);
+    // Older clients/hosts still support object patches. Use text when the patch
+    // contains unsafe native integers, otherwise keep the established API shape.
+    let hasLargeInteger = false;
+    JSON.stringify(entry, (key, value) => {
+      if (typeof value === 'bigint') { hasLargeInteger = true; return null; }
+      return value;
+    });
+    await loreApi('entry', { bookId: lore.bookId, ...(hasLargeInteger ? { entryText } : { entry }) });
+    closeLoreEditor(); await loadLoreBook(lore.bookId); toast('条目已保存');
+  });
+  $('#lb-entry-delete').onclick = () => loreAction(async () => {
+    if (lore.editing == null || !confirm(`永久删除条目 #${lore.editing}？`)) return;
+    await loreApi('entry-delete', { bookId: lore.bookId, uid: lore.editing }); closeLoreEditor(); await loadLoreBook(lore.bookId);
+  });
+  for (const [id, enabled] of [['batch-on', true], ['batch-off', false]]) $('#lb-' + id).onclick = () => loreAction(async () => {
+    if (!lore.selected.size || !discardLore()) return;
+    await loreApi('selection', { bookId: lore.bookId, uids: [...lore.selected], enabled }); await loadLoreBook(lore.bookId);
+  });
+  $('#lb-settings-save').onclick = () => loreAction(async () => {
+    const patch = Object.fromEntries(LB_SETTINGS.map((field) => [field[0], readLoreField(field, 'lb-setting-')]));
+    if (Object.values(patch).some((v) => typeof v === 'number' && v < 0)) throw new Error('扫描、递归和预算不能为负数');
+    const result = await loreApi('settings', patch); fillLoreFields(LB_SETTINGS, result.settings || patch, 'lb-setting-'); lore.settingsDirty = false; toast('世界书设置已保存');
+  });
+  $('#lb-import').onclick = () => { $('#lb-file').value = ''; $('#lb-file').click(); };
+  $('#lb-file').onchange = () => loreAction(async () => {
+    const file = $('#lb-file').files?.[0]; if (!file || !discardLore()) return;
+    const dataText = await file.text();
+    const data = JSON.parse(dataText); // Shape validation only; never reserialize this object.
+    if (!data || typeof data !== 'object' || Array.isArray(data) || !data.entries || typeof data.entries !== 'object' || Array.isArray(data.entries)) throw new Error('请选择原生 SillyTavern 世界书 JSON（entries 对象）');
+    const name = prompt('导入为新世界书，名称：', file.name.replace(/\.json$/i, ''));
+    if (!name?.trim()) return;
+    const result = await loreApi('import', { name: name.trim(), dataText }); await reloadLoreBooks(result.book.id); toast('世界书已导入');
+  });
+  $('#lb-export').onclick = () => loreAction(async () => {
+    if (loreDirty() && !confirm('导出仅包含已保存内容，继续？')) return;
+    const result = await loreApi('export', undefined, `?bookId=${encodeURIComponent(lore.bookId)}`);
+    const blob = new Blob([result.dataText ?? JSON.stringify(result.data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob); const link = document.createElement('a');
+    link.href = url; link.download = (lore.books.find((b) => b.id === lore.bookId)?.name || 'lorebook').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_') + '.json';
+    document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  window.addEventListener('beforeunload', (e) => { if (loreDirty() || lore.settingsDirty) { e.preventDefault(); e.returnValue = ''; } });
+  updateLoreControls();
+}
 
 // ============================================================ 刷新调度
 
@@ -1102,17 +1366,6 @@ async function renderSettings() {
   $('#cfg-meme-matcher-timeout').value = d.config.meme?.matcherTimeoutMs ?? 10000;
   $('#cfg-meme-matcher-retries').value = d.config.meme?.matcherMaxRetries ?? 2;
   $('#cfg-meme-matcher-candidates').value = d.config.meme?.matcherCandidateCount ?? 10;
-
-  // 3. 社区梗库梗雷达 —— 这三项的真源是统一宿主的 config.yaml，不是桥接配置，
-  // 所以单独取一次；宿主没起来就把整张卡片禁掉，免得用户白填。
-  try {
-    const s = await api('/api/host/memes/settings');
-    const on = s.ok !== false;
-    $('#cfg-slang-enabled').checked = on && s.settings.enabled;
-    $('#cfg-slang-limit').value = on ? s.settings.injectLimit : 2;
-    $('#cfg-slang-score').value = on ? s.settings.minScore : 0.45;
-    ['#cfg-slang-enabled', '#cfg-slang-limit', '#cfg-slang-score'].forEach((sel) => { $(sel).disabled = !on; });
-  } catch { /* 宿主不可达时保持输入框原样，保存时也会跳过 */ }
 
   // 4. 群友性格画像
   $('#cfg-portrayal-enabled').checked = d.config.portrayal?.enabled !== false;
@@ -1351,19 +1604,6 @@ async function saveSettings() {
       method: 'PUT',
       body: payload,
     });
-
-    // 梗雷达存在宿主的 config.yaml 里，走宿主自己的端点；宿主挂了不该连累桥接配置
-    if (!$('#cfg-slang-enabled').disabled) {
-      const slangRes = await api('/api/host/memes/settings', {
-        method: 'POST',
-        body: {
-          enabled: $('#cfg-slang-enabled').checked,
-          injectLimit: Number($('#cfg-slang-limit').value) || 2,
-          minScore: Number($('#cfg-slang-score').value) || 0.45,
-        },
-      }).catch((e) => ({ ok: false, error: e.message }));
-      if (slangRes.ok === false) toast(`梗雷达设置未保存：${slangRes.error || '宿主不可达'}`, true);
-    }
 
     toast(res.message || '配置已成功保存！');
     await renderSettings();
@@ -1650,7 +1890,7 @@ const RENDERERS = {
   affection: renderAffection,
   portrayal: renderPortrayal,
   memes: renderMemes,
-  slang: renderSlang,
+  lorebooks: renderLorebooks,
   settings: renderSettings,
 };
 
@@ -1668,7 +1908,7 @@ export async function refresh() {
 }
 
 // 表单 / CRUD 页面不参与自动刷新，避免 5 秒一次重渲染打断用户正在敲的输入
-const NO_AUTOREFRESH = new Set(['sandbox', 'settings', 'plugins-portal', 'slang']);
+const NO_AUTOREFRESH = new Set(['sandbox', 'settings', 'plugins-portal', 'lorebooks']);
 
 function scheduleAutoRefresh() {
   clearInterval(state.timer);
@@ -1717,9 +1957,7 @@ function bind() {
   $('#meme-test').onclick = testMemeTag;
   $('#meme-tag').onkeydown = (e) => { if (e.key === 'Enter') testMemeTag(); };
 
-  $('#slang-filter').onclick = renderSlang;
-  $('#slang-q').onkeydown = (e) => { if (e.key === 'Enter') renderSlang(); };
-  $('#slang-new').onclick = () => openSlangEditor(null);
+  bindLorebooks();
 
   $('#cfg-reload').onclick = () => {
     toast('正在重新载入配置…');

@@ -79,6 +79,8 @@ const SLOT_NAMES = ['voice', 'slang', 'recent', 'extra'];
 export function groupBySlot(blocks) {
   const slots = { voice: [], slang: [], recent: [], extra: [] };
   for (const block of blocks ?? []) {
+    // World Info is assembled by lorebook-renderer at explicit prompt anchors.
+    if (block.metadata?.slot === 'lorebook') continue;
     const raw = block.metadata?.slot ?? 'extra';
     // slot 可能来自远程 Provider 的 JSON（coerceContextBlocks 会取 item.detail.slot）。
     // 不能直接拿它索引 slots：'constructor'/'toString' 这类键会命中 Object.prototype

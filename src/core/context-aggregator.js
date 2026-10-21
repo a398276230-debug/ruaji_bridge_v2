@@ -13,6 +13,7 @@
  */
 
 import { CONTEXT_SCOPES, coerceContextBlocks } from '../contracts/context-block.js';
+import { lorebookContributionCost } from '../orchestration/lorebook-renderer.js';
 
 export class ContextAggregator {
   /**
@@ -204,9 +205,17 @@ export class ContextAggregator {
     // 4. 按 priority 降序；同优先级按 source 稳定排序
     blocks.sort((a, b) => b.priority - a.priority || a.source.localeCompare(b.source));
 
-    // 5. 每来源预算
+    // 5. 每来源预算。World Info 的正文及完整顶部包装也计入开销。
+    const loreCosts = new Map();
     blocks = blocks.map((b) => {
       const limit = Math.min(b.budgetHint ?? this.perSourceBudget, this.perSourceBudget);
+      if (b.metadata?.slot === 'lorebook') {
+        const cost = lorebookContributionCost(b);
+        loreCosts.set(b, cost.characters);
+        if (cost.characters <= limit && cost.bytes <= (b.metadata.renderBudgetBytes ?? 2048)) return b;
+        dropped.push({ source: b.source, reason: 'lorebook-per-source-whole-entry-dropped' });
+        return null;
+      }
       if (b.text.length <= limit) return b;
       dropped.push({ source: b.source, reason: `per-source-truncated(${b.text.length}→${limit})` });
       return {
@@ -216,14 +225,20 @@ export class ContextAggregator {
       };
     });
 
+    blocks = blocks.filter(Boolean);
+
     // 6. 全局预算：从低优先级开始丢，保证高优先级块完整
     const kept = [];
     let used = 0;
     for (const b of blocks) {
-      const cost = b.text.length + 1; // +1 是块之间的换行
+      const cost = (loreCosts.get(b) ?? b.text.length) + 1; // +1 是块之间的换行
       if (used + cost <= this.totalBudget) {
         kept.push(b);
         used += cost;
+        continue;
+      }
+      if (b.metadata?.slot === 'lorebook') {
+        dropped.push({ source: b.source, reason: 'lorebook-total-budget-whole-entry-dropped' });
         continue;
       }
       const remaining = this.totalBudget - used;

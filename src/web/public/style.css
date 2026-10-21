@@ -327,6 +327,27 @@ details[open] > summary { color: var(--text); }
 .test-status.err { color: var(--crit); }
 .test-status.loading { color: var(--warn); }
 
+/* ---------- 世界书：复用原生面板 / 表单 ---------- */
+.lb-split { grid-template-columns: minmax(300px, .9fr) minmax(360px, 1.1fr); align-items: start; margin-top: 14px; }
+.lb-entry { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--border); padding: 9px 0; }
+.lb-entry-open { flex: 1; min-width: 0; white-space: normal; text-align: left; overflow-wrap: anywhere; }
+.lb-entry-open small { display: block; color: var(--text-dim); font-size: 11px; }
+.lb-disabled .lb-entry-open { opacity: .55; }
+.btn.lb-constant { color: var(--accent); border-color: var(--accent); }
+.btn.lb-keyword { color: var(--ok); border-color: var(--ok); }
+#lb-entries { max-height: 70vh; overflow: auto; }
+#lb-editor .form .check, #lb-settings-fields .check { grid-column: auto; flex-wrap: wrap; }
+#lb-editor .form .check input, #lb-settings-fields .check input { width: auto; }
+#lb-settings-save { margin-top: 12px; }
+#view-lorebooks [hidden] { display: none; }
+#view-lorebooks .note { margin-top: 0; }
+@media (max-width: 1100px) { .lb-split { grid-template-columns: 1fr; } }
+@media (max-width: 600px) {
+  #view-lorebooks .form { grid-template-columns: 1fr; }
+  #view-lorebooks input[type=search] { min-width: 0; width: 100%; }
+  .lb-entry { flex-wrap: wrap; }
+}
+
 /* ---------- 杂项 ---------- */
 .empty { color: var(--text-faint); font-size: 13px; text-align: center; padding: 34px 12px; }
 .empty.err { color: var(--crit); }

@@ -104,6 +104,59 @@ test('插件门户 /plug/ 同源透传到统一宿主（页面 404 根治）', a
   }
 });
 
+test('lorebook native text import/export and entry patches survive the Node proxy without integer rounding', async () => {
+  const dataText = '{"future":{"id":9007199254740993},"entries":{"7":{"uid":7,"extension":{"id":-9007199254740993}}}}';
+  const entryText = '{"uid":7,"extension":{"id":9007199254740993}}';
+  const seen = [];
+  const fakeHost = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      seen.push({ method: req.method, url: req.url, body: body ? JSON.parse(body) : undefined });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      if (req.url.startsWith('/api/v1/lorebooks/export')) {
+        // Deliberately supply an actual unsafe number in the old object field.
+        res.end('{"ok":true,"data":' + dataText + ',"dataText":' + JSON.stringify(dataText) + '}');
+      } else if (req.url.startsWith('/api/v1/lorebooks/get')) {
+        res.end('{"ok":true,"entries":[{"uid":7,"raw":' + entryText + ',"entryText":' + JSON.stringify(entryText) + '}]}');
+      } else {
+        res.end('{"ok":true,"book":{"id":1}}');
+      }
+    });
+  });
+  await new Promise((resolve) => fakeHost.listen(0, '127.0.0.1', resolve));
+  const container = buildTestContainer({
+    configOverrides: { unifiedHost: { baseUrl: `http://127.0.0.1:${fakeHost.address().port}` } },
+  });
+  const server = await container.webServer.listen(0, '127.0.0.1');
+  const base = `http://127.0.0.1:${server.address().port}/api/host/lorebooks`;
+  try {
+    for (const [action, payload] of [
+      ['import', { name: 'Native', dataText }],
+      ['entry', { bookId: 1, entryText }],
+      ['import', { name: 'Legacy', data: { entries: {} } }],
+    ]) {
+      const response = await fetch(`${base}/${action}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      });
+      assert.equal(response.status, 200);
+      assert.equal((await response.json()).ok, true);
+      assert.deepEqual(seen.at(-1).body, payload);
+      assert.equal(seen.at(-1).url, `/api/v1/lorebooks/${action}`);
+    }
+    const exported = await (await fetch(`${base}/export?bookId=1`)).json();
+    assert.equal(exported.dataText, dataText, 'download must use text, not the compatibility object');
+    assert.ok(exported.data.entries, 'legacy object API remains available');
+    assert.equal(seen.at(-1).url, '/api/v1/lorebooks/export?bookId=1');
+    const loaded = await (await fetch(`${base}/get?bookId=1`)).json();
+    assert.equal(loaded.entries[0].entryText, entryText, 'raw editor receives the original integer literal');
+  } finally {
+    await container.webServer.close();
+    container.cleanup();
+    await new Promise((resolve) => fakeHost.close(resolve));
+  }
+});
+
 test('/plug/ 代理的安全边界：非 loopback 宿主拒绝、宿主不可达降级 502', async () => {
   // 非 loopback：配置层就拒绝，不会发起任何外联
   const offsite = buildTestContainer({

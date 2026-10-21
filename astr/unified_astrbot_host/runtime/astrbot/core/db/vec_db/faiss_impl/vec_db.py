@@ -27,6 +27,7 @@ import os
 import sqlite3
 import threading
 import uuid
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -95,7 +96,10 @@ class DocumentStorage:
         return conn
 
     def _run(self, fn, *args):
-        with self._lock, self._connect() as conn:
+        # sqlite3.Connection.__exit__ commits/rolls back but does not close.
+        # Close after the transaction, including when fn raises, so short-lived
+        # worker calls cannot retain file handles until cyclic GC runs.
+        with self._lock, closing(self._connect()) as conn, conn:
             return fn(conn, *args)
 
     async def initialize(self) -> None:

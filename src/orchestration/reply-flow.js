@@ -25,6 +25,7 @@ import { SentenceSplitter, splitIntoSegments } from './sentence-splitter.js';
 import { sendLaneKey } from './session-send-queue.js';
 import { createToolProgressReporter, isToolProgressEnabled } from './tool-progress.js';
 import { renderSystemText, renderUserMessage, renderUserContent } from './prompt-renderer.js';
+import { assembleLorebook } from './lorebook-renderer.js';
 import { RESPONSE_TRANSFORM, createTransformContext } from '../middleware/index.js';
 
 /**
@@ -139,9 +140,8 @@ export class ReplyFlow {
       directMediaParts: this.config.context?.directMediaParts !== false,
     });
 
-    const messages = [];
-    if (systemText && systemText.trim()) messages.push({ role: 'system', content: systemText.trim() });
-    messages.push({ role: 'user', content: userMessage });
+    const lorebook = assembleLorebook({ systemText, userMessage, contextBlocks });
+    const messages = lorebook.messages;
 
     const modelRequest = createModelRequest({
       correlationId: inbound.correlationId,
@@ -173,7 +173,7 @@ export class ReplyFlow {
     this.trace?.recordPrompt(inbound.correlationId, {
       model: modelRequest.model,
       systemText: systemText.trim(),
-      userMessage,
+      userMessage: lorebook.userMessage,
       messageCount: messages.length,
     });
 

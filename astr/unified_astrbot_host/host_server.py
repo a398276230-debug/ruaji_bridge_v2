@@ -36,8 +36,8 @@ import bootstrap  # noqa: F401 —— 必须先摆好 sys.path
 
 from aiohttp import web
 
-# 确保日志落地到 data/unified_host.log
-_log_dir = Path(__file__).resolve().parent / "data"
+# Deployments default to data/; isolated runners can redirect log artifacts.
+_log_dir = Path(os.environ.get("HERMES_HOST_LOG_DIR") or Path(__file__).resolve().parent / "data")
 _log_dir.mkdir(parents=True, exist_ok=True)
 _file_handler = RotatingFileHandler(
     _log_dir / "unified_host.log",
@@ -165,11 +165,7 @@ class HostServer:
                 web.get("/api/v1/overview", self.handle_overview),
                 web.get("/api/v1/providers", self.handle_providers),
                 web.post("/api/v1/providers/update", self.handle_providers_update),
-                web.get("/api/v1/memes", self.handle_memes_list),
-                web.post("/api/v1/memes/upsert", self.handle_memes_upsert),
-                web.post("/api/v1/memes/delete", self.handle_memes_delete),
-                web.get("/api/v1/memes/settings", self.handle_memes_settings),
-                web.post("/api/v1/memes/settings", self.handle_memes_settings_update),
+                *self._lorebook_routes(),
                 web.get("/api/v1/livingmemory/sessions", self.handle_livingmemory_sessions),
                 web.post("/api/v1/livingmemory/summarize", self.handle_livingmemory_summarize),
             ]
@@ -225,6 +221,9 @@ class HostServer:
         if not message.text and not message.raw:
             return _json({"ok": False, "error": "empty_message"}, status=400)
 
+        lore_service = getattr(self.unified, 'lorebook_service', None)
+        if lore_service:
+            await lore_service.record_inbound(message)
         dispatched_reports, cmd_results, sent_texts = await self._dispatch_event(message)
         reply_texts = []
         for cr in cmd_results:
@@ -266,6 +265,10 @@ class HostServer:
         ).strip()
 
         message = InboundMessage.from_payload({**inner_payload, **payload})
+        lore_service = getattr(self.unified, 'lorebook_service', None)
+        if lore_service:
+            await lore_service.record_assistant(message, completion_text,
+                                                str(payload.get('txId') or payload.get('messageId') or '') or None)
         event = build_event(message, self_id=str((self.unified.config.get("identity") or {}).get("robot_id") or ""))
         resp = LLMResponse(completion_text=completion_text, role="assistant")
 
@@ -557,7 +560,7 @@ class HostServer:
                 "enabled": "favour_ultra" in self.unified.mounts,
             },
         ]
-        
+
         # 通用页面层：有 pages/ 目录或注册了 web api 的挂载插件（/plug/{key}/page）
         existing_ids = {item["id"] for item in pages}
         for entry in self.plugin_pages.nav_entries():
@@ -754,83 +757,9 @@ class HostServer:
             "warning": warning,
         })
 
-    # ------------------------------------------------------------------
-    # 社区梗库（面板 CRUD + 梗雷达开关）
-    # ------------------------------------------------------------------
-
-    def _meme_store(self) -> Any:
-        store = getattr(self.unified, "meme_store", None)
-        if store is None:
-            raise web.HTTPServiceUnavailable(
-                text=json.dumps({"ok": False, "error": "meme_store_unavailable"}, ensure_ascii=False)
-            )
-        return store
-
-    async def handle_memes_list(self, request: web.Request) -> web.Response:
-        """列出梗库全部条目，供面板渲染。"""
-        limit = int(request.query.get("limit") or 200)
-        return _json(await self._meme_store().list_all_memes(limit=limit))
-
-    async def handle_memes_upsert(self, request: web.Request) -> web.Response:
-        """面板新增/编辑一条梗。
-
-        面板传 merge=False（默认）整条覆盖 —— 用户在输入框里删掉一个别名就该
-        真的删掉；模型侧的 record_community_meme 走 merge=True 只做补充。
-        """
-        body = await _read_json(request)
-        result = await self._meme_store().record_meme(
-            term=str(body.get("term") or ""),
-            meaning=str(body.get("meaning") or ""),
-            origin=str(body.get("origin") or ""),
-            examples=list(body.get("examples") or []),
-            aliases=list(body.get("aliases") or []),
-            tags=list(body.get("tags") or []),
-            meme_id=body.get("id"),
-            merge=bool(body.get("merge", False)),
-        )
-        return _json(result)
-
-    async def handle_memes_delete(self, request: web.Request) -> web.Response:
-        body = await _read_json(request)
-        result = await self._meme_store().delete_meme(
-            term=str(body.get("term") or ""), meme_id=body.get("id")
-        )
-        return _json(result)
-
-    async def handle_memes_settings(self, request: web.Request) -> web.Response:  # noqa: ARG002
-        cfg = self.unified.config.get("community_memes") or {}
-        return _json({
-            "ok": True,
-            "settings": {
-                "enabled": cfg.get("enabled", True) is not False,
-                "injectLimit": int(cfg.get("inject_limit", 2)),
-                "minScore": float(cfg.get("min_score", 0.45)),
-            },
-        })
-
-    async def handle_memes_settings_update(self, request: web.Request) -> web.Response:
-        """改梗雷达开关/条数/阈值，写回 config.yaml 并即刻生效。"""
-        body = await _read_json(request)
-        patch: dict[str, Any] = {}
-        if "enabled" in body:
-            patch["enabled"] = bool(body["enabled"])
-        if "injectLimit" in body:
-            patch["inject_limit"] = max(1, min(int(body["injectLimit"]), 10))
-        if "minScore" in body:
-            patch["min_score"] = max(0.0, min(float(body["minScore"]), 1.0))
-
-        import yaml
-        cfg_path = self._config_path()
-        with open(cfg_path, "r", encoding="utf-8") as f:
-            cfg_data = yaml.safe_load(f) or {}
-        cfg_data.setdefault("community_memes", {}).update(patch)
-        with open(cfg_path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(cfg_data, f, allow_unicode=True, sort_keys=False)
-
-        # 内存配置同步：ContextBuilder 每轮现读 config，改完立刻生效，不用重启
-        self.unified.config.setdefault("community_memes", {}).update(patch)
-        logger.info("[社区梗库] 梗雷达设置已更新: %s", patch)
-        return await self.handle_memes_settings(request)
+    def _lorebook_routes(self):
+        from hermes_layer.lorebook_api import routes
+        return routes(self.unified)
 
     # ---------- livingmemory 手动总结与会话状态 ----------
 

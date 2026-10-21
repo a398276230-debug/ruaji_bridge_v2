@@ -37,7 +37,7 @@
     <button class="tab" data-view="affection">好感度</button>
     <button class="tab" data-view="portrayal">群友画像</button>
     <button class="tab" data-view="memes">表情包</button>
-    <button class="tab" data-view="slang">社区梗库</button>
+    <button class="tab" data-view="lorebooks">世界书</button>
     <button class="tab" data-view="settings">客制化设置</button>
   </nav>
 
@@ -222,17 +222,60 @@
       <div class="meme-grid" id="meme-grid"></div>
     </section>
 
-    <!-- ============ 社区梗库 ============ -->
-    <section class="view" id="view-slang">
+    <!-- ============ 世界书（替代社区梗库，不影响表情包图库） ============ -->
+    <section class="view" id="view-lorebooks">
+      <p class="note">注入范围：世界书内容只插入本轮当前 user 消息，不修改 system / developer 消息。position / depth / role 等原生字段会保留，但受当前消息锚点限制，不能按深度插入历史消息，也不会创建独立角色消息。</p>
       <div class="toolbar">
-        <input type="search" id="slang-q" placeholder="按梗名 / 别名 / 含义 过滤…">
-        <button class="btn" id="slang-filter">过滤</button>
-        <span class="divider"></span>
-        <button class="btn primary" id="slang-new">＋ 新增梗</button>
-        <span class="hint" id="slang-hint"></span>
+        <label>世界书 <select id="lb-book" aria-label="选择世界书"></select></label>
+        <label><input type="checkbox" id="lb-enabled"> 启用此书</label>
+        <button class="btn" id="lb-create">＋ 新建书</button>
+        <button class="btn" id="lb-rename">重命名</button>
+        <button class="btn" id="lb-delete">删除书</button>
+        <button class="btn" id="lb-import">导入 JSON</button>
+        <input type="file" id="lb-file" accept=".json,application/json" hidden>
+        <button class="btn" id="lb-export">导出 JSON</button>
       </div>
-      <p class="hint">每轮对话会把群友原话与整库比向量，只把命中的<strong>梗名</strong>注入提示词（梗雷达）；模型想知道详情会自己调 <code>search_community_meme</code>。条数与开关在「客制化设置」里。</p>
-      <div class="meme-grid" id="slang-grid"></div>
+      <p class="hint" id="lb-status" role="status" aria-live="polite"></p>
+      <details class="panel">
+        <summary>全局扫描与预算设置（所有世界书共用）</summary>
+        <div class="form" id="lb-settings-fields"></div>
+        <button class="btn primary" id="lb-settings-save">保存世界书设置</button>
+      </details>
+      <div class="split lb-split">
+        <div class="panel">
+          <h3>条目</h3>
+          <div class="toolbar">
+            <input type="search" id="lb-q" aria-label="搜索条目" placeholder="搜索标题 / 关键词 / 正文…">
+            <input type="search" id="lb-group" aria-label="分组过滤" placeholder="分组包含…">
+            <select id="lb-active" aria-label="启用状态过滤"><option value="all">全部状态</option><option value="on">已启用</option><option value="off">已禁用</option></select>
+            <select id="lb-sort" aria-label="排序"><option value="desc">Order 降序</option><option value="asc">Order 升序</option></select>
+          </div>
+          <div class="toolbar">
+            <label><input type="checkbox" id="lb-select-all"> 选择筛选结果</label>
+            <span class="hint" id="lb-count"></span>
+            <button class="btn" id="lb-batch-on">批量启用</button>
+            <button class="btn" id="lb-batch-off">批量禁用</button>
+            <button class="btn primary" id="lb-new">＋ 新条目</button>
+          </div>
+          <div id="lb-entries"></div>
+        </div>
+        <div class="panel" id="lb-editor" hidden>
+          <div class="toolbar">
+            <h3 id="lb-editor-title">编辑条目</h3>
+            <button class="btn primary" id="lb-save">保存条目</button>
+            <button class="btn" id="lb-entry-delete">删除条目</button>
+            <button class="btn ghost" id="lb-cancel">关闭 / 放弃</button>
+          </div>
+          <p class="hint">主 / 次关键词每行一项（保留正则中的逗号）。蓝色 = 常驻，绿色 = 关键词触发；禁用独立控制。未设置字段仅显示默认值，不会自动写入 JSON。</p>
+          <div class="form" id="lb-entry-fields"></div>
+          <details open>
+            <summary>完整原生条目 JSON · 未知字段原样保留</summary>
+            <label class="hint" for="lb-raw">与上方控件双向同步；原生 uid 标识不可更改。扩展字段、flags、timing 均可在此编辑。保存接口合并字段，不支持删除已有属性；请显式改为空值或保留。</label>
+            <textarea id="lb-raw" rows="18" spellcheck="false"></textarea>
+            <p class="note" id="lb-json-error" role="alert"></p>
+          </details>
+        </div>
+      </div>
     </section>
     <!-- ============ 客制化设置 ============ -->
     <section class="view" id="view-settings">
@@ -470,30 +513,9 @@
           </div>
         </div>
 
-        <!-- 卡片 3: 社区梗库梗雷达 -->
         <div class="cfg-card">
-          <div class="cfg-card-header">
-            <span class="cfg-icon">📡</span>
-            <h3>社区梗库 · 梗雷达注入</h3>
-          </div>
-          <div class="cfg-card-body">
-            <div class="field-row-checks">
-              <label class="check">
-                <input type="checkbox" id="cfg-slang-enabled"> 每轮对话自动注入梗名提示
-              </label>
-            </div>
-            <div class="field-row">
-              <label>注入条数上限
-                <input type="number" id="cfg-slang-limit" min="1" max="10" step="1" placeholder="2">
-                <span class="field-desc">一轮最多提示几个梗名。只注入名字不注入释义，一条约 20 token</span>
-              </label>
-              <label>命中阈值 (余弦相似度)
-                <input type="number" id="cfg-slang-score" min="0" max="1" step="0.05" placeholder="0.45">
-                <span class="field-desc">调高更准但漏梗，调低更敏感但会提示无关的梗。默认 0.45</span>
-              </label>
-            </div>
-            <span class="field-desc">这三项保存时直接写回统一宿主的 <code>config.yaml</code>，即刻生效无需重启。梗条目本身在「社区梗库」标签页里增删改。</span>
-          </div>
+          <div class="cfg-card-header"><span class="cfg-icon">📚</span><h3>世界书</h3></div>
+          <div class="cfg-card-body"><span class="field-desc">原社区梗库已替换为原生世界书编辑器。请在「世界书」标签页管理多本书、导入导出、全局扫描和预算设置。</span></div>
         </div>
 
         <!-- 卡片 3: 群友性格画像与自动化分析 (Portrayal AI) -->
@@ -908,45 +930,6 @@
       <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:20px; border-top:1px solid rgba(255,255,255,0.08); padding-top:14px;">
         <button class="btn ghost" id="meme-edit-cancel" style="background:#1e2330; border:1px solid rgba(255,255,255,0.1); color:#94a3b8;">取消</button>
         <button class="btn primary" id="meme-edit-save" style="background:var(--accent); color:#fff;">💾 保存修改</button>
-      </div>
-    </div>
-  </div>
-
-  <div id="slang-edit-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); z-index:1000; align-items:center; justify-content:center;">
-    <div style="background:#151821; border:1px solid rgba(255,255,255,0.15); border-radius:10px; width:520px; max-width:92vw; padding:22px; box-shadow:0 20px 50px rgba(0,0,0,0.85); color:#e2e8f0;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:12px;">
-        <h3 style="margin:0; font-size:16px; font-weight:600; color:#fff;" id="slang-edit-title">✏️ 编辑社区梗</h3>
-        <button class="btn btn-sm ghost" id="slang-edit-close" style="color:#94a3b8; font-size:14px; padding:2px 8px;">✕</button>
-      </div>
-      <div style="display:flex; flex-direction:column; gap:12px; max-height:62vh; overflow-y:auto;">
-        <div>
-          <label style="font-size:12px; color:#94a3b8; display:block; margin-bottom:4px;">梗名（唯一，模型查库用的就是它）</label>
-          <input type="text" id="slang-edit-term" placeholder="如: 「真拿你没办法，坐好喽」" style="width:100%; background:#0e1017; border:1px solid rgba(255,255,255,0.12); color:#fff; padding:7px 10px; border-radius:6px;">
-        </div>
-        <div>
-          <label style="font-size:12px; color:#94a3b8; display:block; margin-bottom:4px;">别名 / 变体（逗号分隔，直查会逐个比对）</label>
-          <input type="text" id="slang-edit-aliases" placeholder="如: 坐好喽, 坐好咯, 讲故事定型文" style="width:100%; background:#0e1017; border:1px solid rgba(255,255,255,0.12); color:#fff; padding:7px 10px; border-radius:6px;">
-        </div>
-        <div>
-          <label style="font-size:12px; color:#94a3b8; display:block; margin-bottom:4px;">含义解释</label>
-          <textarea id="slang-edit-meaning" rows="3" placeholder="这个梗是什么意思、在什么语境下用" style="width:100%; background:#0e1017; border:1px solid rgba(255,255,255,0.12); color:#fff; padding:7px 10px; border-radius:6px; resize:vertical; line-height:1.4;"></textarea>
-        </div>
-        <div>
-          <label style="font-size:12px; color:#94a3b8; display:block; margin-bottom:4px;">出处渊源</label>
-          <input type="text" id="slang-edit-origin" placeholder="出自哪部作品 / 哪场直播 / 哪个群友" style="width:100%; background:#0e1017; border:1px solid rgba(255,255,255,0.12); color:#fff; padding:7px 10px; border-radius:6px;">
-        </div>
-        <div>
-          <label style="font-size:12px; color:#94a3b8; display:block; margin-bottom:4px;">经典例句 / 场景（每行一条）</label>
-          <textarea id="slang-edit-examples" rows="3" placeholder="会赢的！&#10;也就是说……没错，是五条悟赢了！" style="width:100%; background:#0e1017; border:1px solid rgba(255,255,255,0.12); color:#fff; padding:7px 10px; border-radius:6px; resize:vertical; line-height:1.4;"></textarea>
-        </div>
-        <div>
-          <label style="font-size:12px; color:#94a3b8; display:block; margin-bottom:4px;">标签（逗号分隔）</label>
-          <input type="text" id="slang-edit-tags" placeholder="如: 二次元, 名场面, 群聊黑话" style="width:100%; background:#0e1017; border:1px solid rgba(255,255,255,0.12); color:#fff; padding:7px 10px; border-radius:6px;">
-        </div>
-      </div>
-      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:20px; border-top:1px solid rgba(255,255,255,0.08); padding-top:14px;">
-        <button class="btn ghost" id="slang-edit-cancel" style="background:#1e2330; border:1px solid rgba(255,255,255,0.1); color:#94a3b8;">取消</button>
-        <button class="btn primary" id="slang-edit-save" style="background:var(--accent); color:#fff;">💾 保存并重算向量</button>
       </div>
     </div>
   </div>

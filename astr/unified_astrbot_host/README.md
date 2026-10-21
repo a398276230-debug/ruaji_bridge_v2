@@ -21,8 +21,9 @@ Hermes Agent ─────▶ │  ┌─────────────�
 三个插件在旧桥接里是三个独立服务（:8876 / :8877 / :8878），各自一份记忆、
 各自一个 Provider 连接池。合到一个进程里换来三件事：
 
-* **插件间能直接共享 `graph_store` 与 `meme_store`**（同一个 Python 对象，
-  不是 HTTP）。图谱与社区梗库的联动对齐就靠这个。
+* **插件间直接共享 `graph_store`，世界书由宿主的 `lorebook_store` 统一管理**，
+  不再启动旧社区梗向量库；World Info 不依赖 LivingMemory 是否挂载。
+  字段、迁移与 user-only 注入说明见 [世界书实现说明](../../docs/lorebook.md)。
 * **一份记忆库**。`memory_scope_mode: global` 之下，群里学到的与 Hermes 记下的
   是同一批数据。
 * **一个出站连接池**。记忆摄取一次要发几十个 embedding 请求，旧实现每次
@@ -50,7 +51,8 @@ venv，没有 faiss。
 | `POST /api/v1/events` | 一条群消息交给记忆与学习插件摄取 |
 | `POST /api/v1/decision` | 问 GCP 要不要回：`direct` / `auto` / `ignore` + `reason` |
 | `POST /api/v1/context/enrich` | 取三个插件的上下文块 |
-| `GET /api/v1/tools` | 四件 Hermes 工具的清单 |
+| `GET /api/v1/tools` | 动态 Hermes 工具清单（含世界书搜索/写入） |
+| `GET/POST /api/v1/lorebooks/*` | 世界书 CRUD、选集、设置、原生 JSON 互导 |
 | `POST /api/v1/tools/call` | 调用一件工具 |
 
 只监听 127.0.0.1，因为**这些端点没有任何鉴权**：谁能连上就能读全部长期记忆、

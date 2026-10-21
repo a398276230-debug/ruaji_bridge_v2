@@ -35,7 +35,8 @@ from hermes_layer.dispatch import (
     scan_and_warn_unsupported_handlers,
 )
 from hermes_layer.gateway_client import GatewayClient, build_from_config
-from hermes_layer.meme_store import CommunityMemeStore
+from hermes_layer.lorebook_store import LorebookStore
+from hermes_layer.lorebook_service import LorebookService
 from hermes_layer.plugin_contract import UnifiedPluginContract
 from plugins_mount.loader import MountSpec, PluginMount, mount_all
 
@@ -129,9 +130,9 @@ class UnifiedContext:
         self.context.unified = self
         StarTools.initialize(self.context)
 
-        # 社区梗数据库与语义检索引擎
-        meme_db_path = os.path.join(data_root, "community_memes.db")
-        self.meme_store = CommunityMemeStore(db_path=meme_db_path, gateway=self.gateway)
+        # World Info has no embedding/network dependency. Migration is explicit.
+        self.lorebook_store = LorebookStore(data_root)
+        self.lorebook_service = LorebookService(self.lorebook_store)
 
         self.mounts: dict[str, PluginMount] = {}
         self.health: dict[str, PluginHealth] = {}
@@ -153,8 +154,6 @@ class UnifiedContext:
         self.ready = all(h.status in ("healthy", "absent") for h in self.health.values())
         await dispatch_lifecycle_event(EventType.OnAstrBotLoadedEvent, {"plugins": list(self.mounts.keys())})
         scan_and_warn_unsupported_handlers()
-        # 异步预热社区梗 Embedding
-        asyncio.create_task(self.meme_store.warm_up_embeddings())
         logger.info(
             "统一宿主装配完成 | 插件 %d 个 | ready=%s",
             len(self.mounts),
@@ -433,9 +432,9 @@ class UnifiedContext:
         engine = self.memory_engine()
         return getattr(engine, "graph_store", None) if engine else None
 
-    def get_meme_store(self) -> CommunityMemeStore | None:
-        """获取社区梗与黑话数据库实例。"""
-        return getattr(self, "meme_store", None)
+    def get_lorebook_store(self) -> LorebookStore | None:
+        """World Info store shared by UI, selection and tools."""
+        return getattr(self, 'lorebook_store', None)
 
     def health_snapshot(self) -> dict[str, Any]:
         plugins = {
