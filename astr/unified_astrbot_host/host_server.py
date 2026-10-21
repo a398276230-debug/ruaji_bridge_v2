@@ -1060,7 +1060,7 @@ async def run(config_path: str | None = None, self_check: bool = False) -> int:
         snapshot = unified.health_snapshot()
         print(json.dumps(snapshot, ensure_ascii=False, indent=2, default=str))
         print(json.dumps(server.tools.manifest(), ensure_ascii=False, indent=2, default=str))
-        ok = snapshot.get("status") != "unhealthy" and len(server.tools.names) == 6
+        ok = snapshot.get("status") != "unhealthy" and len(server.tools.names) >= 8
         await unified.close()
         return 0 if ok else 1
 

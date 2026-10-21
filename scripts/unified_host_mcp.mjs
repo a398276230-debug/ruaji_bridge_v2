@@ -5,8 +5,8 @@
  * 协议支持: JSON-RPC 2.0 (MCP 2024-11-05)
  * 路由逻辑:
  *   - OneBot 协议工具 (21 个): 由 Bridge 本地 OneBotToolsExecutor 直连 NapCat 执行，零延迟、高稳定性
- *   - 记忆与知识图谱工具 (4 个): 转发至 Python 统一宿主 http://127.0.0.1:8870/api/v1/tools/call
- *   - tools/list: 动态合并两端清单，完整暴露 24 个 MCP 工具
+ *   - 记忆、知识图谱与世界书工具 (8 个): 转发至 Python 统一宿主 http://127.0.0.1:8870/api/v1/tools/call
+ *   - tools/list: 动态合并两端清单，完整暴露全部 MCP 工具
  */
 
 import { createInterface } from 'node:readline'
@@ -80,13 +80,13 @@ async function getCombinedToolsList() {
     }
   }
 
-  // 2. 载入宿主记忆/图谱工具
+  // 2. 载入宿主记忆/图谱/世界书工具
   for (const t of hostTools) {
     if (!map.has(t.name)) {
       map.set(t.name, {
         name: t.name,
         description: t.description || '',
-        inputSchema: t.parameters || { type: 'object', properties: {} },
+        inputSchema: t.parameters || t.inputSchema || { type: 'object', properties: {} },
       })
     }
   }

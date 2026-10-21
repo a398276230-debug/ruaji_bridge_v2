@@ -22,21 +22,48 @@ import bootstrap  # noqa: E402,F401
 
 from hermes_layer.adapters.living_memory_adapter import LivingMemoryAdapter  # noqa: E402
 from hermes_layer.lorebook_store import LorebookStore  # noqa: E402
-from hermes_layer.lorebook_tools import build_lorebook_tools  # noqa: E402
+from hermes_layer.lorebook_tools import (  # noqa: E402
+    ADD_SCHEMA,
+    DELETE_SCHEMA,
+    ENTRY_SCHEMA,
+    SEARCH_SCHEMA,
+    UPDATE_SCHEMA,
+    UPSERT_SCHEMA,
+    build_lorebook_tools,
+)
 from hermes_layer.plugin_contract import HermesTool as AdapterTool  # noqa: E402
 from hermes_layer.tool_registry import HermesTool, ToolRegistry  # noqa: E402
 
 
-NATIVE_NAMES = {"search_lorebook_entries", "upsert_lorebook_entry"}
+NATIVE_NAMES = {
+    "search_lorebook_entries",
+    "lorebook_add_entry",
+    "lorebook_update_entry",
+    "lorebook_delete_entry",
+    "upsert_lorebook_entry",
+}
 LEGACY_NAMES = {"search_community_meme", "record_community_meme"}
+
+
+def _deep_merge(original: dict, patch: dict) -> dict:
+    result = dict(original)
+    for key, value in patch.items():
+        result[key] = (
+            _deep_merge(result[key], value)
+            if type(value) is dict and type(result.get(key)) is dict
+            else value
+        )
+    return result
 
 
 class DummyStore:
     """Synchronous store contract, deliberately without meme or vector methods."""
 
     def __init__(self):
-        self.books = [{"id": 1, "name": "First", "enabled": True},
-                      {"id": 2, "name": "Disabled", "enabled": False}]
+        self.books = [
+            {"id": 1, "name": "First", "enabled": True},
+            {"id": 2, "name": "Disabled", "enabled": False},
+        ]
         self.records = {
             1: [{"uid": 0, "raw": {"uid": 0, "key": ["CAT"], "content": "first cat"}}],
             2: [{"uid": 0, "raw": {"uid": 0, "key": ["cat"], "content": "second cat", "disable": True}}],
@@ -50,20 +77,28 @@ class DummyStore:
             raise KeyError(book_id)
         return copy.deepcopy(self.records[book_id])
 
-    def upsert_entry(self, book_id, entry):
+    def upsert_entry(self, book_id, entry, uid=None):
         if book_id not in self.records:
             raise KeyError(book_id)
-        uid = entry.get("uid")
-        if uid is None:
-            uid = max((record["uid"] for record in self.records[book_id]), default=-1) + 1
-        entry["uid"] = uid
+        target_uid = uid if uid is not None else entry.get("uid")
+        if target_uid is None:
+            target_uid = max((record["uid"] for record in self.records[book_id]), default=-1) + 1
+        patch = copy.deepcopy(entry)
+        patch["uid"] = target_uid
         for record in self.records[book_id]:
-            if record["uid"] == uid:
-                record["raw"].update(entry)
+            if record["uid"] == target_uid:
+                record["raw"] = _deep_merge(record["raw"], patch)
                 return copy.deepcopy(record)
-        record = {"uid": uid, "raw": entry}
+        record = {"uid": target_uid, "raw": patch}
         self.records[book_id].append(record)
         return copy.deepcopy(record)
+
+    def delete_entry(self, book_id, uid):
+        if book_id not in self.records:
+            raise KeyError(book_id)
+        before = len(self.records[book_id])
+        self.records[book_id] = [r for r in self.records[book_id] if r["uid"] != uid]
+        return len(self.records[book_id]) < before
 
 
 def unified(store=None):
@@ -90,6 +125,9 @@ def test_native_registration_without_living_memory_or_store():
     for name in NATIVE_NAMES:
         assert manifest[name]["requires"] == []
     assert call(registry, "search_lorebook_entries", {"query": "cat"})["error"] == "lorebook_store_unavailable"
+    assert call(registry, "lorebook_add_entry", {"book": 1, "content": "x", "key": ["k"]})["error"] == "lorebook_store_unavailable"
+    assert call(registry, "lorebook_update_entry", {"book": 1, "uid": 0, "content": "x"})["error"] == "lorebook_store_unavailable"
+    assert call(registry, "lorebook_delete_entry", {"book": 1, "uid": 0})["error"] == "lorebook_store_unavailable"
     assert call(registry, "upsert_lorebook_entry", {"book_id": 1, "entry": {}})["error"] == "lorebook_store_unavailable"
     for name in LEGACY_NAMES:
         assert call(registry, name)["error"] == "unknown_tool"
@@ -138,7 +176,7 @@ def test_living_memory_adapter_exports_only_plugin_tools():
     host.mounts = {"living_memory": SimpleNamespace(config={})}
     registry = ToolRegistry(host)
     assert set(registry.names) == names | NATIVE_NAMES
-    assert len(registry.names) == 5
+    assert len(registry.names) == 8
     assert call(registry, "search_lorebook_entries", {"query": "cat"})["count"] == 2
 
 
@@ -155,7 +193,26 @@ def test_schema_native_fields_extensions_and_factory_isolation():
     second = {tool.name: tool for tool in build_lorebook_tools(unified(), HermesTool)}
     search = first["search_lorebook_entries"].parameters
     assert search["required"] == ["query"]
-    assert set(search["properties"]) == {"query", "limit", "book_id"}
+    assert set(search["properties"]) == {"query", "limit", "book_id", "book"}
+
+    add_schema = first["lorebook_add_entry"].parameters
+    assert set(add_schema["required"]) == {"book", "content"}
+    assert "uid" not in add_schema["properties"]
+    assert {"book", "book_id", "content", "key", "group", "constant", "order", "disable",
+            "probability", "scanDepth", "caseSensitive", "matchWholeWords", "selective",
+            "selectiveLogic", "keysecondary", "extensions"} <= set(add_schema["properties"])
+
+    update_schema = first["lorebook_update_entry"].parameters
+    assert set(update_schema["required"]) == {"book", "uid"}
+    assert {"book", "book_id", "uid", "content", "key", "group", "constant", "order", "disable",
+            "probability", "scanDepth", "caseSensitive", "matchWholeWords", "selective",
+            "selectiveLogic", "keysecondary", "extensions"} <= set(update_schema["properties"])
+
+    delete_schema = first["lorebook_delete_entry"].parameters
+    assert set(delete_schema["required"]) == {"book", "uid"}
+    assert set(delete_schema["properties"]) == {"book", "book_id", "uid"}
+    assert "search_lorebook_entries" in first["lorebook_delete_entry"].description
+
     schema = first["upsert_lorebook_entry"].parameters
     assert set(schema["required"]) == {"book_id", "entry"}
     native = schema["properties"]["entry"]
@@ -170,9 +227,15 @@ def test_schema_native_fields_extensions_and_factory_isolation():
     json.dumps([tool.to_manifest() for tool in first.values()], allow_nan=False)
     native["properties"]["uid"]["minimum"] = 123
     assert second["upsert_lorebook_entry"].parameters["properties"]["entry"]["properties"]["uid"]["minimum"] == 0
+    assert ADD_SCHEMA is not first["lorebook_add_entry"].parameters
+    assert UPDATE_SCHEMA is not first["lorebook_update_entry"].parameters
+    assert DELETE_SCHEMA is not first["lorebook_delete_entry"].parameters
+    assert SEARCH_SCHEMA is not first["search_lorebook_entries"].parameters
+    assert UPSERT_SCHEMA is not first["upsert_lorebook_entry"].parameters
+    assert ENTRY_SCHEMA is not first["upsert_lorebook_entry"].parameters["properties"]["entry"]
 
 
-def test_search_casefold_filter_limit_and_native_results():
+def test_search_casefold_filter_limit_book_name_and_native_results():
     registry = ToolRegistry(unified(DummyStore()))
     result = call(registry, "search_lorebook_entries", {"query": "  CAT  ", "limit": 1})
     assert result["ok"] is True and result["count"] == 1 and result["found"] is True
@@ -184,9 +247,14 @@ def test_search_casefold_filter_limit_and_native_results():
     result = call(registry, "search_lorebook_entries", {"query": "cat", "book_id": 2})
     assert result["count"] == 1 and result["results"][0]["entry"]["disable"] is True
     assert result["results"][0]["book_id"] == 2
+    by_name = call(registry, "search_lorebook_entries", {"query": "cat", "book": "disabled"})
+    assert by_name["ok"] is True and by_name["count"] == 1 and by_name["book_id"] == 2
+    wildcard = call(registry, "search_lorebook_entries", {"query": "*", "book": "First"})
+    assert wildcard["ok"] is True and wildcard["count"] == 1 and wildcard["results"][0]["uid"] == 0
     result = call(registry, "search_lorebook_entries", {"query": "unmatched"})
     assert result["ok"] is True and result["count"] == 0 and result["found"] is False
     assert call(registry, "search_lorebook_entries", {"query": "cat", "book_id": 999})["error"] == "lorebook_not_found"
+    assert call(registry, "search_lorebook_entries", {"query": "cat", "book": "NoSuchBook"})["error"] == "lorebook_not_found"
 
 
 @pytest.mark.parametrize("name,arguments,error", [
@@ -198,7 +266,45 @@ def test_search_casefold_filter_limit_and_native_results():
     ("search_lorebook_entries", {"query": "cat", "limit": True}, "bad_arguments"),
     ("search_lorebook_entries", {"query": "cat", "book_id": False}, "bad_arguments"),
     ("search_lorebook_entries", {"query": "cat", "book_id": "1"}, "bad_arguments"),
+    ("search_lorebook_entries", {"query": "cat", "book": ""}, "bad_arguments"),
+    ("search_lorebook_entries", {"query": "cat", "book": 0}, "bad_arguments"),
+    ("search_lorebook_entries", {"query": "cat", "book": 1, "book_id": 2}, "bad_arguments"),
     ("search_lorebook_entries", {"query": "cat", "unknown": 1}, "bad_arguments"),
+    ("lorebook_add_entry", {"book": 1, "content": "", "key": ["k"]}, "bad_arguments"),
+    ("lorebook_add_entry", {"book": 1, "content": "   ", "key": ["k"]}, "bad_arguments"),
+    ("lorebook_add_entry", {"book": 1, "key": ["k"]}, "bad_arguments"),
+    ("lorebook_add_entry", {"book": 1, "content": "valid"}, "bad_arguments"),
+    ("lorebook_add_entry", {"book": 1, "content": "valid", "key": []}, "bad_arguments"),
+    ("lorebook_add_entry", {"book": 1, "content": "valid", "key": ["  "]}, "bad_arguments"),
+    ("lorebook_add_entry", {"book": 1, "content": "valid", "key": [123]}, "bad_arguments"),
+    ("lorebook_add_entry", {"book": 1, "content": "valid", "key": "not-a-list"}, "bad_arguments"),
+    ("lorebook_add_entry", {"content": "valid", "key": ["k"]}, "bad_arguments"),
+    ("lorebook_add_entry", {"book": 0, "content": "valid", "key": ["k"]}, "bad_arguments"),
+    ("lorebook_add_entry", {"book": True, "content": "valid", "key": ["k"]}, "bad_arguments"),
+    ("lorebook_add_entry", {"book": "   ", "content": "valid", "key": ["k"]}, "bad_arguments"),
+    ("lorebook_add_entry", {"book": 999, "content": "valid", "key": ["k"]}, "lorebook_not_found"),
+    ("lorebook_add_entry", {"book": "MissingBook", "content": "valid", "key": ["k"]}, "lorebook_not_found"),
+    ("lorebook_add_entry", {"book": 1, "content": "valid", "key": ["k"], "uid": 5}, "bad_arguments"),
+    ("lorebook_add_entry", {"book": 1, "content": "valid", "key": ["k"], "unknown_field": 1}, "bad_arguments"),
+    ("lorebook_update_entry", {"book": 1, "uid": 0}, "bad_arguments"),
+    ("lorebook_update_entry", {"book": 1, "uid": -1, "content": "x"}, "bad_arguments"),
+    ("lorebook_update_entry", {"book": 1, "uid": True, "content": "x"}, "bad_arguments"),
+    ("lorebook_update_entry", {"book": 1, "uid": "0", "content": "x"}, "bad_arguments"),
+    ("lorebook_update_entry", {"book": 1, "uid": 0, "content": ""}, "bad_arguments"),
+    ("lorebook_update_entry", {"book": 1, "uid": 0, "content": "   "}, "bad_arguments"),
+    ("lorebook_update_entry", {"book": 1, "uid": 0, "key": []}, "bad_arguments"),
+    ("lorebook_update_entry", {"book": 1, "uid": 0, "key": [""]}, "bad_arguments"),
+    ("lorebook_update_entry", {"book": 1, "uid": 999, "content": "x"}, "entry_not_found"),
+    ("lorebook_update_entry", {"book": 999, "uid": 0, "content": "x"}, "lorebook_not_found"),
+    ("lorebook_update_entry", {"book": "MissingBook", "uid": 0, "content": "x"}, "lorebook_not_found"),
+    ("lorebook_update_entry", {"book": 1, "uid": 0, "unknown_field": 1}, "bad_arguments"),
+    ("lorebook_delete_entry", {"book": 1, "uid": -1}, "bad_arguments"),
+    ("lorebook_delete_entry", {"book": 1, "uid": False}, "bad_arguments"),
+    ("lorebook_delete_entry", {"book": 1}, "bad_arguments"),
+    ("lorebook_delete_entry", {"uid": 0}, "bad_arguments"),
+    ("lorebook_delete_entry", {"book": 1, "uid": 999}, "entry_not_found"),
+    ("lorebook_delete_entry", {"book": 999, "uid": 0}, "lorebook_not_found"),
+    ("lorebook_delete_entry", {"book": "MissingBook", "uid": 0}, "lorebook_not_found"),
     ("upsert_lorebook_entry", {"book_id": 1, "entry": []}, "bad_arguments"),
     ("upsert_lorebook_entry", {"book_id": 0, "entry": {}}, "bad_arguments"),
     ("upsert_lorebook_entry", {"book_id": True, "entry": {}}, "bad_arguments"),
@@ -208,6 +314,151 @@ def test_search_casefold_filter_limit_and_native_results():
 def test_invalid_arguments_are_explicit(name, arguments, error):
     result = call(ToolRegistry(unified(DummyStore())), name, arguments)
     assert result["ok"] is False and result["error"] == error
+
+
+def test_add_constant_blue_light_allows_empty_or_omitted_key(store):
+    book = store.create_book("BlueLightBook")
+    registry = ToolRegistry(unified(store))
+
+    # 1. constant=True with omitted key -> succeeds with key=[]
+    res1 = call(registry, "lorebook_add_entry", {
+        "book": "BlueLightBook",
+        "content": "常驻世界观背景设定",
+        "constant": True,
+        "group": "world-core",
+        "order": 50,
+    })
+    assert res1["ok"] is True
+    assert res1["book_id"] == book["id"]
+    assert res1["uid"] == 0
+    assert res1["entry"]["constant"] is True
+    assert res1["entry"]["key"] == []
+    assert res1["entry"]["content"] == "常驻世界观背景设定"
+
+    # 2. constant=True with explicit key=[] -> succeeds
+    res2 = call(registry, "lorebook_add_entry", {
+        "book": book["id"],
+        "content": "第二条蓝灯常驻",
+        "constant": True,
+        "key": [],
+    })
+    assert res2["ok"] is True and res2["uid"] == 1
+    assert res2["entry"]["key"] == []
+
+    # 3. Turning a key-less blue-light entry into green-light without providing key must fail
+    bad_toggle = call(registry, "lorebook_update_entry", {
+        "book": book["id"],
+        "uid": res1["uid"],
+        "constant": False,
+    })
+    assert bad_toggle["ok"] is False and bad_toggle["error"] == "bad_arguments"
+    # Confirm stored entry was not mutated
+    assert store.list_entries(book["id"])[0]["raw"]["constant"] is True
+
+
+def test_add_update_patch_semantics_and_delete_lifecycle(store):
+    book = store.create_book("艾尔多利亚编年史")
+    registry = ToolRegistry(unified(store))
+
+    initial_fields = {
+        "book": "艾尔多利亚编年史",
+        "content": "初始正文：古龙栖息在北境火山。",
+        "key": ["古龙", "北境火山"],
+        "keysecondary": ["红龙", "炎息"],
+        "comment": "北境古龙设定",
+        "group": "dragons",
+        "constant": False,
+        "order": 120,
+        "disable": False,
+        "probability": 85.5,
+        "useProbability": True,
+        "scanDepth": 6,
+        "caseSensitive": True,
+        "matchWholeWords": False,
+        "selective": True,
+        "selectiveLogic": 2,
+        "position": 4,
+        "depth": 3,
+        "role": 1,
+        "sticky": 4,
+        "cooldown": 2,
+        "delay": 1,
+        "excludeRecursion": True,
+        "preventRecursion": False,
+        "delayUntilRecursion": 1,
+        "ignoreBudget": True,
+        "groupOverride": True,
+        "groupWeight": 55.0,
+        "useGroupScoring": False,
+        "extensions": {"author": "ruaji", "nested": {"version": 1, "keep": "yes"}},
+    }
+    added = call(registry, "lorebook_add_entry", initial_fields)
+    assert added["ok"] is True
+    assert added["book_id"] == book["id"]
+    uid = added["uid"]
+    assert uid == 0
+
+    expected = {k: copy.deepcopy(v) for k, v in initial_fields.items() if k != "book"}
+    expected["uid"] = uid
+    for k, v in expected.items():
+        assert added["entry"][k] == v, f"field {k} mismatch after add"
+
+    # Partial update 1: only update content and order; every other field must remain untouched.
+    updated_1 = call(registry, "lorebook_update_entry", {
+        "book": book["id"],
+        "uid": uid,
+        "content": "更新后正文：古龙已迁徙至灰烬裂谷。",
+        "order": 200,
+    })
+    assert updated_1["ok"] is True
+    assert updated_1["book_id"] == book["id"]
+    assert updated_1["uid"] == uid
+    expected["content"] = "更新后正文：古龙已迁徙至灰烬裂谷。"
+    expected["order"] = 200
+    for k, v in expected.items():
+        assert updated_1["entry"][k] == v, f"field {k} was unexpectedly altered during partial update 1"
+
+    # Partial update 2: update by book name, only touch probability, scanDepth=None, and nested extensions.
+    updated_2 = call(registry, "lorebook_update_entry", {
+        "book": "艾尔多利亚编年史",
+        "uid": uid,
+        "probability": 60,
+        "scanDepth": None,
+        "extensions": {"nested": {"version": 2, "added_flag": True}},
+    })
+    assert updated_2["ok"] is True
+    expected["probability"] = 60
+    expected["scanDepth"] = None
+    expected["extensions"]["nested"]["version"] = 2
+    expected["extensions"]["nested"]["added_flag"] = True
+    # Verify untouched nested key 'keep' and top-level 'author' in extensions survived
+    assert updated_2["entry"]["extensions"]["author"] == "ruaji"
+    assert updated_2["entry"]["extensions"]["nested"]["keep"] == "yes"
+    for k, v in expected.items():
+        assert updated_2["entry"][k] == v, f"field {k} was unexpectedly altered during partial update 2"
+
+    # Search back to verify persistence
+    searched = call(registry, "search_lorebook_entries", {"query": "灰烬裂谷", "book": "艾尔多利亚编年史"})
+    assert searched["ok"] is True and searched["count"] == 1
+    assert searched["results"][0]["uid"] == uid
+    assert searched["results"][0]["entry"] == expected
+
+    # Delete the entry
+    deleted = call(registry, "lorebook_delete_entry", {"book": "艾尔多利亚编年史", "uid": uid})
+    assert deleted["ok"] is True
+    assert deleted["book_id"] == book["id"]
+    assert deleted["uid"] == uid
+    assert deleted["deleted"] is True
+    assert deleted["entry"] == expected
+
+    # Confirm entry is gone from search and store
+    after_search = call(registry, "search_lorebook_entries", {"query": "灰烬裂谷", "book_id": book["id"]})
+    assert after_search["ok"] is True and after_search["count"] == 0 and after_search["found"] is False
+    assert store.list_entries(book["id"]) == []
+
+    # Deleting the same uid again must fail with entry_not_found
+    delete_again = call(registry, "lorebook_delete_entry", {"book": book["id"], "uid": uid})
+    assert delete_again["ok"] is False and delete_again["error"] == "entry_not_found"
 
 
 def test_upsert_passes_native_dictionary_without_mutating_arguments():
@@ -249,9 +500,9 @@ def test_real_store_crud_preserves_native_fields_and_persistence(store):
         assert created["entry"][field] == value
     assert created["entry"]["uid"] == uid
 
-    # Native updates use the uid inside the entry, not a legacy term identity.
-    changed = call(registry, "upsert_lorebook_entry", {
-        "book_id": book["id"], "entry": {"uid": uid, "content": "revised dragon", "extensions": {"vendor": {"added": 1}}},
+    # Native updates via lorebook_update_entry also preserve unknown futureNativeField!
+    changed = call(registry, "lorebook_update_entry", {
+        "book_id": book["id"], "uid": uid, "content": "revised dragon", "extensions": {"vendor": {"added": 1}},
     })
     assert changed["ok"] is True and changed["uid"] == uid
     assert changed["entry"]["position"] == 4 and changed["entry"]["futureNativeField"] == native["futureNativeField"]
@@ -270,7 +521,8 @@ def test_real_store_crud_preserves_native_fields_and_persistence(store):
     assert extension["count"] == 1
     reopened = LorebookStore(Path(store.db_path).parent)
     assert reopened.export_book(book["id"]) == store.export_book(book["id"])
-    assert store.delete_entry(book["id"], uid) is True
+    deleted = call(registry, "lorebook_delete_entry", {"book_id": book["id"], "uid": uid})
+    assert deleted["ok"] is True and deleted["uid"] == uid
     assert call(registry, "search_lorebook_entries", {"query": "dragon", "book_id": book["id"]})["count"] == 0
 
 
@@ -281,3 +533,33 @@ def test_real_store_validation_error_is_not_internal_error(store, patch):
     result = call(registry, "upsert_lorebook_entry", {"book_id": book_id, "entry": patch})
     assert result["ok"] is False and result["error"] == "bad_arguments"
     assert store.list_entries(book_id) == []
+
+
+@pytest.mark.parametrize("invalid_patch", [
+    {"probability": 101},
+    {"probability": -1},
+    {"scanDepth": -1},
+    {"selectiveLogic": 9},
+    {"disable": "not_bool"},
+    {"order": "not_int"},
+    {"extensions": "not_dict"},
+])
+def test_add_and_update_store_validation_errors_return_bad_arguments(store, invalid_patch):
+    book_id = store.create_book("ValidationAddUpdate")["id"]
+    registry = ToolRegistry(unified(store))
+    add_res = call(registry, "lorebook_add_entry", {
+        "book": book_id, "content": "valid content", "key": ["valid"], **invalid_patch,
+    })
+    assert add_res["ok"] is False and add_res["error"] == "bad_arguments"
+    assert store.list_entries(book_id) == []
+
+    created = call(registry, "lorebook_add_entry", {
+        "book": book_id, "content": "valid content", "key": ["valid"],
+    })
+    assert created["ok"] is True
+    uid = created["uid"]
+    upd_res = call(registry, "lorebook_update_entry", {
+        "book": book_id, "uid": uid, **invalid_patch,
+    })
+    assert upd_res["ok"] is False and upd_res["error"] == "bad_arguments"
+    assert store.list_entries(book_id)[0]["raw"] == created["entry"]

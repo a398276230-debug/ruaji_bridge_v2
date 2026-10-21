@@ -132,7 +132,12 @@ Eldoria is a magical forest.
 - 导入兼容 POST `{name,data:原生JSON}`，Web 原生文件改用 `{name,dataText:原始JSON文本}`；导出 GET `export?bookId=...` 返回 `{ok,data,dataText}`，面板下载 **dataText 本体**，不是 HTTP 包装。Python 解析/序列化原生文本，避免 JavaScript Number 舍入未知扩展中的大整数；单条同样提供 entryText 无损编辑通道。
 - 面板「世界书」支持多书管理、开关、文本/组/启停筛选、数字 order、蓝绿切换、批量勾选启停、完整原生 JSON 编辑和文件导入导出；不另起皮肤。
 - 单条更新递归 merge，未提供字段不丢；UI 显式拒绝通过“省略字段”删除已有属性（可以删整条后重建）。
-- 工具替换为 `search_lorebook_entries(query,limit=10,book_id=None)` 与 `upsert_lorebook_entry(book_id,entry)`；无需 LivingMemory 挂载。
+- 工具由 `lorebook_tools.py` 暴露为 5 个宿主原生 MCP 工具（无需 LivingMemory 挂载）：
+  - `search_lorebook_entries(query, limit=10, book_id=None, book=None)`：按文本检索世界书条目（`query='*'` 可列出书内全部条目，支持按 `book` 书名/ID 或 `book_id` 过滤，返回结果附带 `books` 清单）。
+  - `lorebook_add_entry(book, content, key=..., ...)`：新建单条条目（自动分配并返回 `uid`；绿灯条目要求至少 1 个非空 `key`，蓝灯 `constant=true` 允许省略 `key` 或传空列表 `[]`）。
+  - `lorebook_update_entry(book, uid, ...)`：按 `book` + `uid` **部分字段更新**（patch 语义，未传字段严格保持原值，`extensions` 递归合并）。
+  - `lorebook_delete_entry(book, uid)`：按 `book` + `uid` 删除单条条目（返回被删条目的原内容备份）。
+  - `upsert_lorebook_entry(book_id, entry)`：底层完整原生 World Info JSON 字典兼容保留接口。
 
 ### 同名实现核对
 
