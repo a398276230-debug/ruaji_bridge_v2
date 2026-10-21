@@ -103,6 +103,10 @@
     "directMediaParts": true
   },
 
+  "lorebook": {
+    "maintenanceHint": true
+  },
+
   "reply": {
     "sendEnabled": true,
     "sideEffectsEnabled": true,

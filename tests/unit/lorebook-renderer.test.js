@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { assembleLorebook, lorebookContributionCost } from '../../src/orchestration/lorebook-renderer.js';
-import { groupBySlot, renderSystemText } from '../../src/orchestration/prompt-renderer.js';
+import { LOREBOOK_MAINTENANCE_NOTICE, groupBySlot, renderSystemText } from '../../src/orchestration/prompt-renderer.js';
 import { ContextAggregator } from '../../src/core/context-aggregator.js';
 import { ReplyFlow } from '../../src/orchestration/reply-flow.js';
 import { TraceCollector } from '../../src/web/trace-collector.js';
@@ -102,6 +102,9 @@ test('ReplyFlow sends matched entries at the top of the actual latest user reque
   await flow.run({ inbound, triggerType: 'at', contextBlocks: [block('Eldoria is a magical forest.', 4, { depth: 1, role: 0 })] });
   assert.deepEqual(request.messages.map((m) => m.role), ['system', 'user']);
   assert.equal(request.messages[0].content.includes('magical forest'), false);
+  assert.ok(request.messages[0].content.endsWith(LOREBOOK_MAINTENANCE_NOTICE));
+  assert.equal(request.messages[0].content.split(LOREBOOK_MAINTENANCE_NOTICE).length - 1, 1);
+  assert.equal(request.messages[1].content.includes(LOREBOOK_MAINTENANCE_NOTICE), false);
   assert.ok(request.messages[1].content.startsWith(prefix('Eldoria is a magical forest.')));
   assert.match(request.messages[1].content, /<\/lorebook-context>\n\n[\s\S]*说说 Eldoria/);
   assert.equal(trace.get('lore-turn').prompt.userMessage, request.messages[1].content);

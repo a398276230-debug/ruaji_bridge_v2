@@ -212,6 +212,8 @@ def test_schema_native_fields_extensions_and_factory_isolation():
     assert set(delete_schema["required"]) == {"book", "uid"}
     assert set(delete_schema["properties"]) == {"book", "book_id", "uid"}
     assert "search_lorebook_entries" in first["lorebook_delete_entry"].description
+    assert "search_lorebook_entries" in first["lorebook_add_entry"].description
+    assert "update" in first["lorebook_add_entry"].description
 
     schema = first["upsert_lorebook_entry"].parameters
     assert set(schema["required"]) == {"book_id", "entry"}
@@ -563,3 +565,38 @@ def test_add_and_update_store_validation_errors_return_bad_arguments(store, inva
     })
     assert upd_res["ok"] is False and upd_res["error"] == "bad_arguments"
     assert store.list_entries(book_id)[0]["raw"] == created["entry"]
+
+
+def test_add_entry_reports_duplicate_of_without_blocking_write(store):
+    book1 = store.create_book("群黑话词典")
+    book2 = store.create_book("子词典")
+    registry = ToolRegistry(unified(store))
+
+    first = call(registry, "lorebook_add_entry", {
+        "book": book1["id"],
+        "key": ["鼠蛋", "小鼠幼崽"],
+        "content": "指1-3岁的鼠族幼崽。",
+        "comment": "鼠蛋词条",
+        "group": "slang",
+    })
+    assert first["ok"] is True
+    assert "duplicate_of" not in first
+
+    # Same-book and cross-book case-insensitive key overlap returns duplicate_of without blocking write.
+    second = call(registry, "lorebook_add_entry", {
+        "book": book2["id"],
+        "key": ["  鼠蛋  ", "全新别名"],
+        "content": "补充解释。",
+        "group": "slang",
+    })
+    assert second["ok"] is True
+    assert second["uid"] == 0
+    assert "duplicate_of" in second
+    assert len(second["duplicate_of"]) == 1
+    dup = second["duplicate_of"][0]
+    assert dup["book_id"] == book1["id"]
+    assert dup["book_name"] == "群黑话词典"
+    assert dup["uid"] == first["uid"]
+    assert dup["matched_keys"] == ["鼠蛋"]
+    assert len(store.list_entries(book2["id"])) == 1
+

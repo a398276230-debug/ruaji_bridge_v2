@@ -8,6 +8,34 @@ import hashlib
 import json
 from .lorebook_engine import evaluate
 
+LOREBOOK_MAINTENANCE_NOTICE = (
+    "[世界书维护: 聊天中遇到不认识的梗、黑话、群内定型文或新冒出的梗时，先调用 search_lorebook_entries 查重；"
+    "确认未收录且查证清楚含义后，再用 lorebook_add_entry 记入（key 填梗名与别名，content 写含义、来历与典型例句，group 归入合适分类）。"
+    "已有条目过时或不准确时用 lorebook_update_entry 更新而勿重复新建，明显写错或重复的条目用 lorebook_delete_entry 删除；"
+    "不确定含义时严禁凭猜测入库，切勿为了写而写，仅在确实遇到新内容时动手。]"
+)
+
+
+def resolve_maintenance_hint(config: dict | None = None) -> str:
+    """Return the active lorebook maintenance hint for system prompt tail, or '' when disabled."""
+    cfg = (config or {}).get("lorebook") if isinstance(config, dict) else None
+    if not isinstance(cfg, dict):
+        cfg = {}
+    raw_toggle = cfg.get("maintenanceHint", cfg.get("maintenance_hint", True))
+    if raw_toggle is False:
+        return ""
+    if isinstance(raw_toggle, str):
+        custom = raw_toggle.strip()
+        if custom.lower() in ("false", "0", "off", "no"):
+            return ""
+        if custom and custom.lower() not in ("true", "1", "on", "yes"):
+            return custom
+    prompt = cfg.get("maintenancePrompt", cfg.get("maintenance_prompt"))
+    if isinstance(prompt, str) and prompt.strip():
+        return prompt.strip()
+    return LOREBOOK_MAINTENANCE_NOTICE
+
+
 
 class LorebookService:
     def __init__(self, store):

@@ -129,6 +129,7 @@ export class ReplyFlow {
       triggerType,
       affectionContext,
       identity: this.config.identity,
+      lorebook: this.config.lorebook,
     });
     const userMessage = renderUserMessage({
       inbound,

@@ -15,10 +15,13 @@ import pytest
 HOST = Path(__file__).resolve().parents[1]
 ROOT = HOST.parents[1]
 sys.path.insert(0, str(HOST))
+import bootstrap  # noqa: E402,F401
 from hermes_layer.contracts import InboundMessage
+from hermes_layer.context_builder import ContextBuilder
 from hermes_layer.lorebook_store import LorebookStore
-from hermes_layer.lorebook_service import LorebookService
+from hermes_layer.lorebook_service import LOREBOOK_MAINTENANCE_NOTICE, LorebookService, resolve_maintenance_hint
 from hermes_layer.lorebook_api import routes
+from runtime.config import load_config
 
 
 @pytest.fixture
@@ -234,3 +237,74 @@ def test_equal_private_and_group_ids_cannot_share_history_cache_or_effects(store
         assert await service.context(group) == result
         assert store.message_count(service.session_key(group)) == 3
     asyncio.run(scenario())
+
+
+def test_maintenance_hint_in_final_prompt_and_not_duplicated(store):
+    cfg = load_config(str(HOST / 'config.example.yaml'))
+    hint = resolve_maintenance_hint(cfg)
+    assert hint == LOREBOOK_MAINTENANCE_NOTICE
+    assert 'search_lorebook_entries' in hint
+    assert 'lorebook_add_entry' in hint
+    assert 'lorebook_update_entry' in hint
+    assert 'lorebook_delete_entry' in hint
+
+    book = store.create_book('群聊黑话')
+    store.upsert_entry(book['id'], {'key': ['鼠蛋'], 'content': '鼠蛋：指1-3岁的鼠族幼崽。'})
+    service = LorebookService(store)
+
+    class PreInjectedAdapter:
+        plugin_key = 'living_memory'
+        execution_order = 10
+
+        async def provide_context(self, _message, _history=None):
+            from hermes_layer.contracts import ContextBlock
+            # Even if an upstream block already contains the maintenance hint, enrich must not duplicate it.
+            return [ContextBlock(source='living_memory', kind='system_prompt',
+                                 content=f'<FavorabilityPlugin>rules</FavorabilityPlugin>\n\n{hint}')]
+
+    async def scenario():
+        unified = SimpleNamespace(
+            config=cfg,
+            mounts={},
+            adapters=[],
+            lorebook_store=store,
+            lorebook_service=service,
+        )
+        builder = ContextBuilder(unified)
+        msg = InboundMessage(message_id='m-maint-1', user_id='3054039169', group_id='1076958977',
+                             is_private=False, content='鼠蛋是什么意思', text='鼠蛋是什么意思')
+        enriched = await builder.enrich(msg)
+        assert enriched['systemPrompt'].endswith(hint)
+        assert enriched['systemPrompt'].count(hint) == 1
+        assert enriched['systemPrompt'].count('[世界书维护:') == 1
+        user_blocks_text = '\n'.join(b['content'] for b in enriched['blocks'])
+        assert '[世界书维护:' not in user_blocks_text
+
+        # When upstream already carries the hint, it still appears only once.
+        unified.mounts = {'living_memory': SimpleNamespace()}
+        unified.adapters = [PreInjectedAdapter()]
+        enriched_dedup = await builder.enrich(InboundMessage(
+            message_id='m-maint-2', user_id='3054039169', group_id='1076958977',
+            is_private=False, content='鼠蛋', text='鼠蛋',
+        ))
+        assert enriched_dedup['systemPrompt'].count(hint) == 1
+        assert enriched_dedup['systemPrompt'].count('[世界书维护:') == 1
+
+        # Toggle off via config.lorebook.maintenanceHint = False
+        disabled_cfg = {**cfg, 'lorebook': {'maintenanceHint': False}}
+        unified_off = SimpleNamespace(
+            config=disabled_cfg,
+            mounts={},
+            adapters=[],
+            lorebook_store=store,
+            lorebook_service=service,
+        )
+        enriched_off = await ContextBuilder(unified_off).enrich(InboundMessage(
+            message_id='m-maint-3', user_id='3054039169', group_id='1076958977',
+            is_private=False, content='鼠蛋', text='鼠蛋',
+        ))
+        assert '[世界书维护:' not in enriched_off['systemPrompt']
+        assert enriched_off['lorebookMaintenanceHint'] == ''
+
+    asyncio.run(scenario())
+

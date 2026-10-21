@@ -144,6 +144,7 @@ export function createSandboxApi(deps) {
           triggerType: decision.triggerType,
           affectionContext,
           identity: config.identity,
+          lorebook: config.lorebook,
         });
         const userMessage = renderUserMessage({
           inbound,

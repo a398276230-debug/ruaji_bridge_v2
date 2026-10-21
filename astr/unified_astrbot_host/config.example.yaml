@@ -77,6 +77,11 @@ plugins:
 # World Info 在 data_root/lorebooks.db 持久化，扫描/预算设置由面板「世界书」管理。
 # 不再读取旧 community_memes 配置，不启动向量预热。旧库通过
 # scripts/migrate-community-memes.py --source .../community_memes.db --data-root ... 显式迁移。
+lorebook:
+  # 是否在每轮请求的 system 提示尾部常驻世界书主动维护指令（默认 true）
+  maintenanceHint: true
+  maintenancePrompt: '[世界书维护: 聊天中遇到不认识的梗、黑话、群内定型文或新冒出的梗时，先调用 search_lorebook_entries 查重；确认未收录且查证清楚含义后，再用 lorebook_add_entry 记入（key 填梗名与别名，content 写含义、来历与典型例句，group 归入合适分类）。已有条目过时或不准确时用 lorebook_update_entry 更新而勿重复新建，明显写错或重复的条目用 lorebook_delete_entry 删除；不确定含义时严禁凭猜测入库，切勿为了写而写，仅在确实遇到新内容时动手。]'
+
 hermes:
   export_enabled: true
   export_dir: ${HERMES_AGENT_DIR:-F:/hermes-agent}

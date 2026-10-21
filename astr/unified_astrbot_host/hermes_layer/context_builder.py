@@ -52,6 +52,7 @@ from astrbot.core.star.star_handler import EventType, star_handlers_registry
 
 from .contracts import ContextBlock, InboundMessage, estimate_tokens
 from .dispatch import resolve_owner
+from .lorebook_service import resolve_maintenance_hint
 
 #: 阶段 A 的成员：彼此不读对方输出，可以并发。
 CONCURRENT_STAGE = ("living_memory",)
@@ -300,10 +301,18 @@ class ContextBuilder:
         merged = "\n\n".join(b.content for b in blocks if b.kind == "system_prompt" and b.content)
         context_text = "\n\n".join(b.content for b in blocks if b.content)
         lore = await lore_service.context(message, history) if lore_service and not waiting_event.is_stopped() else {'blocks': []}
+        maintenance_hint = (
+            resolve_maintenance_hint(getattr(self._unified, "config", None))
+            if not waiting_event.is_stopped()
+            else ""
+        )
+        if maintenance_hint and maintenance_hint not in merged:
+            merged = f"{merged}\n\n{maintenance_hint}" if merged else maintenance_hint
         return {
             "sessionId": message.session_id,
             "blocks": [b.to_payload() for b in blocks] + lore['blocks'],
             "lorebookDiagnostics": lore.get('diagnostics', {}),
+            "lorebookMaintenanceHint": maintenance_hint,
             "systemPrompt": merged,
             "contextText": context_text,
             "tokensEstimate": sum(b.tokens_estimate for b in blocks),

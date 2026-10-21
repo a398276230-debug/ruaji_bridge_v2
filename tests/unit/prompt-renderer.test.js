@@ -14,6 +14,8 @@ import {
   TRIGGER_NOTICES,
   KNOWLEDGE_NOTICE,
   QQ_TOOLS_NOTICE,
+  LOREBOOK_MAINTENANCE_NOTICE,
+  resolveLorebookMaintenanceHint,
   NON_ADMIN_GUARD_NOTICE,
   NON_ADMIN_TOOL_BUDGET_COMMAND,
   AFF_MARKER_RULE,
@@ -947,4 +949,71 @@ test('directMediaParts=true 且未命中 /see 时照旧走多模态 parts（回�
   assert.ok(Array.isArray(out), '默认行为不变：有图就是多模态 parts');
   assert.ok(JSON.stringify(out).includes('image_url'));
   assert.ok(!JSON.stringify(out).includes(SEE_MODE_NOTICE));
+});
+
+test('世界书主动维护常驻提示：置于所有分支 systemText 尾部、不混入 userMessage、且绝不重复出现两次', () => {
+  assert.ok(LOREBOOK_MAINTENANCE_NOTICE.includes('search_lorebook_entries'));
+  assert.ok(LOREBOOK_MAINTENANCE_NOTICE.includes('lorebook_add_entry'));
+  assert.ok(LOREBOOK_MAINTENANCE_NOTICE.includes('lorebook_update_entry'));
+  assert.ok(LOREBOOK_MAINTENANCE_NOTICE.includes('lorebook_delete_entry'));
+
+  const branches = [
+    { label: '主人群聊@', inbound: makeInbound({ userId: IDENTITY.ownerId }), triggerType: 'at' },
+    { label: '普通群友@', inbound: makeInbound({ userId: '2260757842' }), triggerType: 'at' },
+    { label: '群聊名字呼唤', inbound: makeInbound({ userId: '2260757842' }), triggerType: 'keyword' },
+    { label: '群聊主动插话', inbound: makeInbound({ userId: '2260757842' }), triggerType: 'ai_decision' },
+    { label: '私聊', inbound: makeInbound({ userId: '2260757842', messageType: 'private', groupId: null }), triggerType: 'at' },
+  ];
+
+  for (const b of branches) {
+    const blocks = [
+      createContextBlock({
+        source: 'favour_ultra',
+        text: `<FavorabilityPlugin><Rules>rules</Rules></FavorabilityPlugin>\n\n${LOREBOOK_MAINTENANCE_NOTICE}`,
+        metadata: { slot: 'extra' },
+      }),
+      createContextBlock({
+        source: 'lorebook',
+        text: LOREBOOK_MAINTENANCE_NOTICE,
+        dedupeKey: 'lorebook-maintenance-hint',
+        metadata: { slot: 'lorebook_maintenance' },
+      }),
+    ];
+    const systemText = renderSystemText({
+      inbound: b.inbound,
+      contextBlocks: blocks,
+      triggerType: b.triggerType,
+      affectionContext: null,
+      identity: IDENTITY,
+    });
+    const userMessage = renderUserMessage({
+      inbound: b.inbound,
+      contextBlocks: blocks,
+      triggerType: b.triggerType,
+      affectionContext: null,
+      identity: IDENTITY,
+    });
+
+    assert.ok(systemText.endsWith(LOREBOOK_MAINTENANCE_NOTICE), `${b.label} 分支应将维护提示置于 systemText 尾部`);
+    assert.equal(
+      systemText.split(LOREBOOK_MAINTENANCE_NOTICE).length - 1,
+      1,
+      `${b.label} 分支的 systemText 中维护提示必须恰好出现 1 次`,
+    );
+    assert.equal(
+      String(userMessage).includes('[世界书维护:'),
+      false,
+      `${b.label} 分支的 userMessage 不得混入维护提示`,
+    );
+  }
+
+  // 开关关闭时不再注入
+  const disabledSystem = renderSystemText({
+    inbound: makeInbound(),
+    contextBlocks: [],
+    lorebook: { maintenanceHint: false },
+  });
+  assert.equal(disabledSystem.includes('[世界书维护:'), false, 'maintenanceHint=false 时应关闭维护提示');
+  assert.equal(resolveLorebookMaintenanceHint({ maintenanceHint: false }), '');
+  assert.equal(resolveLorebookMaintenanceHint({ maintenanceHint: '自定义维护指令' }), '自定义维护指令');
 });

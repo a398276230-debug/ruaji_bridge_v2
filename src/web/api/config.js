@@ -136,6 +136,9 @@ export function createConfigApi(deps) {
           // 默认 true（旧行为）：图片直接挂 image_url 多模态 parts
           directMediaParts: config.context?.directMediaParts !== false,
         },
+        lorebook: {
+          maintenanceHint: config.lorebook?.maintenanceHint ?? true,
+        },
         reply: {
           sendEnabled: Boolean(config.reply?.sendEnabled),
           sideEffectsEnabled: Boolean(config.reply?.sideEffectsEnabled),
@@ -299,6 +302,17 @@ export function createConfigApi(deps) {
           if (Object.hasOwn(tp, 'minIntervalMs') && (typeof tp.minIntervalMs !== 'number' || !Number.isFinite(tp.minIntervalMs) || tp.minIntervalMs < 0)) {
             errors.push('toolProgress.minIntervalMs 必须为非负有限毫秒数');
           }
+        }
+      }
+      if (updates.lorebook !== undefined) {
+        if (!updates.lorebook || typeof updates.lorebook !== 'object' || Array.isArray(updates.lorebook)) {
+          errors.push('lorebook 必须为配置对象');
+        } else if (
+          Object.hasOwn(updates.lorebook, 'maintenanceHint') &&
+          typeof updates.lorebook.maintenanceHint !== 'boolean' &&
+          typeof updates.lorebook.maintenanceHint !== 'string'
+        ) {
+          errors.push('lorebook.maintenanceHint 必须为布尔值或字符串');
         }
       }
       if (updates.identity) {
@@ -577,6 +591,15 @@ export function createConfigApi(deps) {
         };
       }
 
+      if (updates.lorebook) {
+        diskConfig.lorebook = {
+          ...(diskConfig.lorebook || {}),
+          maintenanceHint: updates.lorebook.maintenanceHint !== undefined
+            ? updates.lorebook.maintenanceHint
+            : (diskConfig.lorebook?.maintenanceHint ?? true),
+        };
+      }
+
       if (updates.reply) {
         diskConfig.reply = {
           ...(diskConfig.reply || {}),
@@ -690,6 +713,9 @@ export function createConfigApi(deps) {
         if (modelAdapter) modelAdapter.sessionRotationsPerDay = diskConfig.model.sessionRotationsPerDay;
       }
       if (diskConfig.context) Object.assign(config.context, diskConfig.context);
+      if (diskConfig.lorebook) {
+        config.lorebook = { ...(config.lorebook || {}), ...diskConfig.lorebook };
+      }
       if (diskConfig.reply) Object.assign(config.reply, diskConfig.reply);
       if (diskConfig.fastAck) Object.assign(config.fastAck, diskConfig.fastAck);
       if (tp !== undefined) {

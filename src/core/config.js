@@ -186,6 +186,9 @@ const DEFAULTS = {
     collectTimeoutMs: 5000,
     directMediaParts: true,
   },
+  lorebook: {
+    maintenanceHint: true,
+  },
   reply: {
     sendEnabled: true,
     sideEffectsEnabled: true,
@@ -347,6 +350,7 @@ const ENV_OVERRIDES = [
   ['RUAJI_V2_MEME_VISION_MODEL', 'meme.visionModel', String],
   ['RUAJI_V2_MEME_MATCHER_BASE_URL', 'meme.matcherBaseUrl', String],
   ['RUAJI_V2_MEME_MATCHER_MODEL', 'meme.matcherModel', String],
+  ['RUAJI_V2_LOREBOOK_MAINTENANCE_HINT', 'lorebook.maintenanceHint', toBool],
 ];
 
 function toBool(v) {
@@ -464,6 +468,17 @@ function validate(config) {
     }
     if (typeof tp.minIntervalMs !== 'number' || !Number.isFinite(tp.minIntervalMs) || tp.minIntervalMs < 0) {
       errors.push('toolProgress.minIntervalMs 非法（应为非负有限毫秒数）');
+    }
+  }
+  if (config.lorebook !== undefined) {
+    if (!isPlainObject(config.lorebook)) {
+      errors.push('lorebook 非法（应为配置对象）');
+    } else if (
+      config.lorebook.maintenanceHint !== undefined &&
+      typeof config.lorebook.maintenanceHint !== 'boolean' &&
+      typeof config.lorebook.maintenanceHint !== 'string'
+    ) {
+      errors.push('lorebook.maintenanceHint 非法（应为布尔值或自定义提示字符串）');
     }
   }
   if (!config.napcat.wsUrl) errors.push('napcat.wsUrl 缺失');

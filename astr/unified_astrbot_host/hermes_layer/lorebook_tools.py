@@ -530,6 +530,29 @@ def build_lorebook_tools(unified: Any, tool_type: Callable[..., Any]) -> list[An
                 return err
             assert target_book is not None
 
+            duplicates: list[dict[str, Any]] = []
+            input_keys_folded = {k.strip().casefold() for k in normalized_key if isinstance(k, str) and k.strip()}
+            if input_keys_folded:
+                for b in books:
+                    for record in store.list_entries(b["id"]):
+                        raw_entry = record.get("raw") or {}
+                        existing_keys = raw_entry.get("key") or []
+                        if not isinstance(existing_keys, list):
+                            continue
+                        matched_keys = [
+                            ek for ek in existing_keys
+                            if isinstance(ek, str) and ek.strip().casefold() in input_keys_folded
+                        ]
+                        if matched_keys:
+                            duplicates.append({
+                                "book_id": b["id"],
+                                "book_name": b["name"],
+                                "uid": record["uid"],
+                                "matched_keys": matched_keys,
+                                "key": list(existing_keys),
+                                "comment": raw_entry.get("comment", ""),
+                            })
+
             entry_payload: dict[str, Any] = {
                 "key": normalized_key,
                 "content": content,
@@ -543,13 +566,16 @@ def build_lorebook_tools(unified: Any, tool_type: Callable[..., Any]) -> list[An
         except KeyError as exc:
             return {"ok": False, "error": "lorebook_not_found", "message": str(exc)}
 
-        return {
+        out: dict[str, Any] = {
             "ok": True,
             "book_id": target_book["id"],
             "book_name": target_book["name"],
             "uid": saved["uid"],
             "entry": saved["raw"],
         }
+        if duplicates:
+            out["duplicate_of"] = duplicates
+        return out
 
     async def lorebook_update_entry(
         book: int | str | None = None,
@@ -712,12 +738,13 @@ def build_lorebook_tools(unified: Any, tool_type: Callable[..., Any]) -> list[An
             name="lorebook_add_entry",
             description=(
                 "向指定世界书新建一条 World Info 条目，自动分配并返回新条目的 uid。"
+                "【注意】新建前先 search_lorebook_entries 查重，已存在请用 update（lorebook_update_entry）修改，不要重复新建。"
                 "必填参数：book（世界书 ID 或书名，也可传 book_id）、content（非空正文）；"
                 "绿灯条目（默认 constant=false）必须提供至少包含 1 个非空关键词的 key 列表；"
                 "蓝灯常驻条目（constant=true）key 可传空列表 [] 或省略。"
                 "可选支持 group、constant、order、disable、probability、scanDepth、caseSensitive、"
                 "matchWholeWords、selective、selectiveLogic、keysecondary、comment、extensions 等字段。"
-                "成功返回 {ok: true, book_id, uid, entry}。"
+                "成功返回 {ok: true, book_id, uid, entry}；若 key 命中已有条目，会额外返回 duplicate_of 列表提示。"
             ),
             parameters=copy.deepcopy(ADD_SCHEMA),
             handler=lorebook_add_entry,
