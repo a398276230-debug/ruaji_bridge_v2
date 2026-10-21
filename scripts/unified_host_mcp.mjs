@@ -20,7 +20,22 @@ const HOST_BASE_URL = process.env.UNIFIED_HOST_URL || 'http://127.0.0.1:8870'
 const TOOLS_MANIFEST_FALLBACK = process.env.UNIFIED_HOST_MANIFEST || 'F:/hermes-agent/unified_host_tools.json'
 const PROTOCOL_VERSION = '2024-11-05'
 
-const onebotExecutor = new OneBotToolsExecutor()
+// OneBot 凭证唯一来源：bridge.config.json（与桥接本体共用同一份配置，
+// 不再依赖 Hermes 侧 mcp env 里的 NAPCAT_ACCESS_TOKEN，避免两处 token 走偏）。
+const BRIDGE_CONFIG_PATH = resolve(__dirname, '..', 'bridge.config.json')
+function readBridgeNapcatConfig() {
+  try {
+    const cfg = JSON.parse(readFileSync(BRIDGE_CONFIG_PATH, 'utf-8'))
+    return cfg?.napcat || {}
+  } catch {
+    return {}
+  }
+}
+const napcatConfig = readBridgeNapcatConfig()
+const onebotExecutor = new OneBotToolsExecutor({
+  httpUrl: napcatConfig.httpUrl,
+  accessToken: napcatConfig.accessToken,
+})
 
 async function fetchHostManifest() {
   try {
