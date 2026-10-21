@@ -123,6 +123,8 @@ export class WakeFlow {
     this.pendingBlocks = new Map();
     /** sessionId 集合：这一跳因目标被别的 flow 独占而未投递，需要下一跳重试 */
     this.deferred = new Set();
+    /** sessionId -> target：委派转述返回后待立即重读的会话 */
+    this.pendingRechecks = new Map();
     this.lastErrorLoggedAt = 0;
     this.polling = false;
   }
@@ -225,6 +227,12 @@ export class WakeFlow {
         this.sessionState.set(sessionId, { lastPollAt: now, count });
         polled += 1;
         delivered += result.delivered;
+      }
+
+      while (this.pendingRechecks.size > 0) {
+        const recheckResult = await this._flushPendingRechecks(Date.now());
+        polled += recheckResult.polled;
+        delivered += recheckResult.delivered;
       }
 
       return { sessions: rows.length, polled, delivered };
@@ -350,8 +358,18 @@ export class WakeFlow {
 
     // 委派完成行：Hermes 不为它起唤醒轮（只落内部汇报行），桥接替它叫醒模型转述。
     // 只负责“叫醒”，不直接投递任何东西——内部汇报行永不进 QQ。
+    // 注意：只要委派尚未真正完成唤醒转述（仍在 graceMs / 冷却等待或 inFlight 中），
+    // 就不能把 pendingBlocks 清掉，否则 message_count 未变时会掉进 60s 复核死区。
+    let hasPendingDelegation = false;
     for (const delegation of delegations) {
-      this._maybeRelayDelegation(delegation, target, { sessionId, now });
+      if (this._maybeRelayDelegation(delegation, target, { sessionId, now })) {
+        hasPendingDelegation = true;
+      }
+    }
+    if (hasPendingDelegation && !this.pendingBlocks.has(sessionId)) {
+      const anchorRowId = first.openBlock?.anchorRowId ?? delegations[0]?.rowId ?? 0;
+      const partCount = first.openBlock?.partCount ?? 0;
+      this.pendingBlocks.set(sessionId, { anchorRowId, partCount, hits: 1 });
     }
 
     let delivered = 0;
@@ -432,6 +450,9 @@ export class WakeFlow {
     for (const sessionId of this.deferred) {
       if (!byId.has(sessionId)) this.deferred.delete(sessionId);
     }
+    for (const sessionId of this.pendingRechecks.keys()) {
+      if (!byId.has(sessionId)) this.pendingRechecks.delete(sessionId);
+    }
     // 委派转述状态按 anchorKey 记，而不是会话：清掉已不在会话列表里的目标即可。
     // sessionId 直接存在状态里 —— 会话 id 本身可能含 '#'（/new 轮换形如 …_#02），
     // 用 split('#')[0] 反推会把会话名截断，导致状态被每跳误删、反复叫醒模型。
@@ -455,21 +476,22 @@ export class WakeFlow {
    */
   _maybeRelayDelegation(delegation, target, { sessionId, now }) {
     const relay = this.config.wakeDelivery?.delegationRelay ?? {};
-    if (relay.enabled === false || !this.model?.generate) return;
+    if (relay.enabled === false || !this.model?.generate) return false;
 
     const key = delegation.stableKey ?? delegation.anchorKey;
-    if (this.cursors?.isHandled?.(key)) return;
+    if (this.cursors?.isHandled?.(key)) return false;
 
     const state = this.relayState.get(key);
-    if (state?.done || state?.inFlight) return;
+    if (state?.done) return false;
+    if (state?.inFlight) return true;
     const maxAttempts = Number(relay.maxAttempts) || 3;
-    if (state && state.attempts >= maxAttempts) return;
+    if (state && state.attempts >= maxAttempts) return false;
     const cooldownMs = Number(relay.retryCooldownMs) || 0;
-    if (state && cooldownMs > 0 && now - state.lastAt < cooldownMs) return;
+    if (state && cooldownMs > 0 && now - state.lastAt < cooldownMs) return true;
     // 完成行刚落地时先等一下：万一 Hermes 侧自己写了 assistant 回复（未来版本 / 别的部署），
     // 就不必再唤醒一次；等到 graceMs 仍无回复才是真的需要桥接补上。
     const graceMs = Number(relay.graceMs) || 0;
-    if (graceMs > 0 && delegation.at > 0 && now - delegation.at < graceMs) return;
+    if (graceMs > 0 && delegation.at > 0 && now - delegation.at < graceMs) return true;
 
     const attempts = (state?.attempts ?? 0) + 1;
     this.relayState.set(key, { attempts, lastAt: now, inFlight: true, sessionId });
@@ -498,10 +520,49 @@ export class WakeFlow {
         rowId: delegation.rowId,
         attempts,
       });
+      this._scheduleSessionRecheck(sessionId, target);
     }).catch((err) => {
       this.relayState.set(key, { attempts, lastAt: Date.now(), inFlight: false, sessionId });
       this._noteError(`委派转述唤醒失败 ${sessionId}#${delegation.rowId}: ${err.message}`, now);
     });
+    return true;
+  }
+
+  /**
+   * 委派转述模型返回后直接触发会话重读，不再干等下一个轮询周期。
+   */
+  _scheduleSessionRecheck(sessionId, target) {
+    if (!this.enabled || !this.api?.available || !sessionId || !target) return;
+    this.pendingRechecks.set(sessionId, target);
+    if (this.polling) return;
+    this.polling = true;
+    this._flushPendingRechecks(Date.now())
+      .catch((err) => {
+        this._noteError(`委派唤醒后即时重读异常: ${err.message}`, Date.now());
+      })
+      .finally(() => {
+        this.polling = false;
+      });
+  }
+
+  async _flushPendingRechecks(now = Date.now()) {
+    let polled = 0;
+    let delivered = 0;
+    while (this.pendingRechecks.size > 0) {
+      const entries = Array.from(this.pendingRechecks.entries());
+      this.pendingRechecks.clear();
+      for (const [sessionId, target] of entries) {
+        const count =
+          this.cursors.getCursor(sessionId)?.messageCount ??
+          this.sessionState.get(sessionId)?.count ??
+          0;
+        const result = await this._pollSession({ sessionId, target, count, now });
+        this.sessionState.set(sessionId, { lastPollAt: now, count });
+        polled += 1;
+        delivered += result.delivered;
+      }
+    }
+    return { polled, delivered };
   }
 
   /**

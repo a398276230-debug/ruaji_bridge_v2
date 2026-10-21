@@ -100,7 +100,10 @@ export function createTypingDelayMiddleware({ config, logger, sleep = cancellabl
       const state = perSession.get(sessionId) ?? { lastSentAt: 0, lastLength: 0 };
 
       // 按最终可见文本计算，所以必须排在 strip-markdown / meme 之后
+      // 空段（如被 favour-tags / strip-markdown 剥空的标签或分割线）直接放行：
+      // 既不白睡一次延迟，也不把 lastLength 污染成 0。
       const visibleLength = String(ctx.text ?? '').length;
+      if (visibleLength === 0) return next(ctx);
 
       if (state.lastSentAt > 0) {
         // bridge.js:638 的 `lastSentLen || 10` 兜底：上一段可见文本为空（例如整段
