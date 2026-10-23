@@ -1,0 +1,56 @@
+RUAJI Bridge v2 (ruaji_bridge_v2)
+Copyright (c) 2026 ruaji
+
+This repository bundles and adapts the following third-party open-source
+components under `astr/`. Their original copyright, license, and attribution
+notices are retained below in accordance with Apache License 2.0 Section 4
+and GNU Affero General Public License v3.0:
+
+================================================================================
+1. astrbot_plugin_Favour_Ultra (可自定义好感度系统)
+================================================================================
+- Directory: `astr/astrbot_plugin_Favour_Ultra`
+- Author / Copyright: 糯米茨 (nuomicici)
+- Upstream Repository: https://github.com/nuomicici/astrbot_plugin_Favour_Ultra
+- Vendored Version: v4.4.5
+- License: Apache License, Version 2.0 (see `LICENSES/Apache-2.0.txt` and
+  `astr/astrbot_plugin_Favour_Ultra/LICENSE`)
+- Upstream NOTICE file: The upstream v4.4.5 distribution does not contain a
+  separate `NOTICE` file.
+- Local Modifications: Modified by `ruaji_bridge_v2` for unified host
+  compatibility, owner record immutability, admin intervention preflight gate
+  (`reply_gate.py`), and proactive-turn exemption. See
+  `astr/astrbot_plugin_Favour_Ultra/LOCAL_CHANGES.md` and
+  `astr/astrbot_plugin_Favour_Ultra/PATCHES.md` for prominent modification
+  notices per Apache-2.0 Section 4(b).
+
+================================================================================
+2. astrbot_plugin_group_chat_plus (chat_plus)
+================================================================================
+- Directory: `astr/astrbot_plugin_group_chat_plus`
+- Author / Copyright: Him666233
+- Upstream Repository: https://github.com/Him666233/astrbot_plugin_group_chat_plus
+- Vendored Version: V1.2.3.hotfix.2
+- License: GNU Affero General Public License v3.0 (see `LICENSES/AGPL-3.0.txt`
+  and `astr/astrbot_plugin_group_chat_plus/LICENSE`)
+- Local Modifications: Modified by `ruaji_bridge_v2` on 2026-10-23; released
+  under AGPL-3.0. See `astr/astrbot_plugin_group_chat_plus/LOCAL_CHANGES.md`
+  for details per AGPL-3.0 Section 5(a).
+
+================================================================================
+3. astrbot_plugin_livingmemory (LivingMemory)
+================================================================================
+- Directory: `astr/astrbot_plugin_livingmemory`
+- Author / Copyright: lxfight
+- Upstream Repository: https://github.com/lxfight-s-Astrbot-Plugins/astrbot_plugin_livingmemory
+- Vendored Version: 2.6.0-beta.3 (with subsequent upstream Unreleased sync)
+- License: GNU Affero General Public License v3.0 (see `LICENSES/AGPL-3.0.txt`
+  and `astr/astrbot_plugin_livingmemory/LICENSE`)
+- Local Modifications: Modified by `ruaji_bridge_v2` on 2026-10-23; released
+  under AGPL-3.0. See `astr/astrbot_plugin_livingmemory/LOCAL_CHANGES.md`
+  for details per AGPL-3.0 Section 5(a).
+- Bundled Frontend Asset within LivingMemory:
+  - Lucide Icons (`astr/astrbot_plugin_livingmemory/pages/dashboard/vendor/lucide.min.js`)
+  - Copyright (c) 2026 Lucide Icons and Contributors (ISC License)
+  - Portions derived from Feather Icons, Copyright (c) 2013-present Cole Bemis (MIT License)
+  - Full license text: `astr/astrbot_plugin_livingmemory/pages/dashboard/vendor/LUCIDE_LICENSE`

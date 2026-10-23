@@ -4,6 +4,25 @@
 
 ---
 
+## ⚖️ 开源许可与源码获取声明（License & Corresponding Source）
+
+本项目由**自有桥接/宿主代码**与 `astr/` 目录下内嵌的**第三方 AstrBot 插件**共同组成，采用如下分层许可结构：
+
+1. **自有代码（MIT License）**：
+   本仓库除 `astr/astrbot_plugin_*` 以外的自有代码（包括 `src/`、`scripts/`、`tests/` 以及 `astr/unified_astrbot_host/` 统一宿主垫片层）采用 **[MIT License](LICENSE)** 授权。
+2. **内嵌第三方插件及各自许可证**：
+   - [`astr/astrbot_plugin_Favour_Ultra`](astr/astrbot_plugin_Favour_Ultra)（作者：糯米茨 / `nuomicici`）：**[Apache License 2.0](LICENSES/Apache-2.0.txt)**（本地修改见 [LOCAL_CHANGES.md](astr/astrbot_plugin_Favour_Ultra/LOCAL_CHANGES.md) 与 [PATCHES.md](astr/astrbot_plugin_Favour_Ultra/PATCHES.md)）
+   - [`astr/astrbot_plugin_group_chat_plus`](astr/astrbot_plugin_group_chat_plus)（作者：`Him666233`）：**[GNU AGPL v3.0](LICENSES/AGPL-3.0.txt)**（本地修改见 [LOCAL_CHANGES.md](astr/astrbot_plugin_group_chat_plus/LOCAL_CHANGES.md)）
+   - [`astr/astrbot_plugin_livingmemory`](astr/astrbot_plugin_livingmemory)（作者：`lxfight`）：**[GNU AGPL v3.0](LICENSES/AGPL-3.0.txt)**（本地修改见 [LOCAL_CHANGES.md](astr/astrbot_plugin_livingmemory/LOCAL_CHANGES.md)）
+   - 完整第三方组件来源、版本与合规说明详见 **[THIRD_PARTY.md](THIRD_PARTY.md)** 与 **[NOTICE](NOTICE)**。
+3. **整体分发与网络交互合规（Combined Work under AGPL-3.0）**：
+   由于本项目通过 `astr/unified_astrbot_host` 以进程内（in-process）方式加载并运行上述 AGPL-3.0 插件，且作为 QQ 机器人通过网络向远程用户提供交互服务，**当本项目作为整体打包分发或对外提供网络服务时，整体组合作品适用 [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSES/AGPL-3.0.txt)**。
+4. **完整对应源码获取地址（AGPL-3.0 Section 13 — Remote Network Interaction）**：
+   根据 AGPL-3.0 第 13 条规定，任何通过网络与本机器人交互的用户均可直接从本公开仓库免费获取完整对应源码（Corresponding Source，含自有代码、统一宿主及经本地修改后的全部第三方插件源码）：
+   👉 **https://github.com/a398276230-debug/ruaji_bridge_v2**
+
+---
+
 ## ✨ 核心特性
 
 - 🚀 **双总线解耦架构**：
@@ -225,4 +244,11 @@ redirect 回退硬打断时，桥接立即停止旧回复投递，并主动调�
 
 ## 📄 许可证
 
-MIT License
+- **自有代码**（`src/`、`scripts/`、`tests/`、`astr/unified_astrbot_host/`）：[MIT License](LICENSE)
+- **内嵌第三方插件**：
+  - `astr/astrbot_plugin_Favour_Ultra`：[Apache License 2.0](LICENSES/Apache-2.0.txt)
+  - `astr/astrbot_plugin_group_chat_plus`：[GNU AGPL v3.0](LICENSES/AGPL-3.0.txt)
+  - `astr/astrbot_plugin_livingmemory`：[GNU AGPL v3.0](LICENSES/AGPL-3.0.txt)
+- **整体分发与远程网络交互服务**：适用 **[GNU AGPL v3.0](LICENSES/AGPL-3.0.txt)**（详见顶部「开源许可与源码获取声明」、[THIRD_PARTY.md](THIRD_PARTY.md) 及 [NOTICE](NOTICE)）
+- **完整源码获取地址**：https://github.com/a398276230-debug/ruaji_bridge_v2
+
